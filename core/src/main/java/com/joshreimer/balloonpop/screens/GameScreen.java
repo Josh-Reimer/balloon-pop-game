@@ -13,7 +13,7 @@ import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.MathUtils;
 import com.badlogic.gdx.math.Vector3;
 import com.badlogic.gdx.utils.Array;
-import com.badlogic.gdx.utils.viewport.FitViewport;
+import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
@@ -49,15 +49,13 @@ public class GameScreen implements Screen {
     private static final float MAX_BLIMP_INTERVAL = 18f;
     private static final float BLIMP_MIN_SPEED = 80f;
     private static final float BLIMP_MAX_SPEED = 130f;
-    private static final float BLIMP_MIN_Y = WORLD_HEIGHT * 0.55f;
-    private static final float BLIMP_MAX_Y = WORLD_HEIGHT * 0.85f;
+    private static final float BLIMP_MIN_Y_FRACTION = 0.55f;
+    private static final float BLIMP_MAX_Y_FRACTION = 0.85f;
 
     private static final float ICON_MARGIN = 44f;
     private static final float ICON_RADIUS = 30f;
     private static final float GEAR_X = ICON_MARGIN;
-    private static final float GEAR_Y = WORLD_HEIGHT - ICON_MARGIN;
     private static final float PAUSE_X = WORLD_WIDTH - ICON_MARGIN;
-    private static final float PAUSE_Y = WORLD_HEIGHT - ICON_MARGIN;
 
     private static final int GEAR_TEETH = 8;
     private static final float GEAR_TOOTH_R = 15f;
@@ -105,12 +103,18 @@ public class GameScreen implements Screen {
 
     private final Vector3 touchWorld = new Vector3();
 
+    /** Actual world height for the current screen; the viewport extends it past WORLD_HEIGHT. */
+    private float worldHeight = WORLD_HEIGHT;
+
     public GameScreen(BalloonPopGame game, GameSettings settings) {
         this.game = game;
         this.settings = settings;
 
         camera = new OrthographicCamera();
-        viewport = new FitViewport(WORLD_WIDTH, WORLD_HEIGHT, camera);
+        // Extends the world vertically to fill the screen (never horizontally, so the 480-wide
+        // layout constants stay valid) — otherwise balloons enter at a letterbox bar part way
+        // down the display instead of at its top edge.
+        viewport = new ExtendViewport(WORLD_WIDTH, WORLD_HEIGHT, WORLD_WIDTH, 0, camera);
         camera.position.set(WORLD_WIDTH / 2f, WORLD_HEIGHT / 2f, 0);
 
         shapeRenderer = new ShapeRenderer();
@@ -171,7 +175,7 @@ public class GameScreen implements Screen {
 
         // The settings gear is always reachable, in every state, and takes priority
         // over any other tap so it never gets swallowed by gameplay input.
-        if (justTouched && withinCircle(touchWorld.x, touchWorld.y, GEAR_X, GEAR_Y, ICON_RADIUS)) {
+        if (justTouched && withinCircle(touchWorld.x, touchWorld.y, GEAR_X, iconRowY(), ICON_RADIUS)) {
             firing = false;
             game.showSettings();
             return;
@@ -187,7 +191,7 @@ public class GameScreen implements Screen {
                 break;
 
             case PLAYING:
-                if (justTouched && withinCircle(touchWorld.x, touchWorld.y, PAUSE_X, PAUSE_Y, ICON_RADIUS)) {
+                if (justTouched && withinCircle(touchWorld.x, touchWorld.y, PAUSE_X, iconRowY(), ICON_RADIUS)) {
                     firing = false;
                     state = State.PAUSED;
                     break;
@@ -214,6 +218,11 @@ public class GameScreen implements Screen {
                 }
                 break;
         }
+    }
+
+    /** Y of the gear/pause/bullets row, pinned to the top of the world however tall it ends up. */
+    private float iconRowY() {
+        return worldHeight - ICON_MARGIN;
     }
 
     private boolean withinCircle(float px, float py, float cx, float cy, float radius) {
@@ -266,7 +275,7 @@ public class GameScreen implements Screen {
         boolean movingRight = MathUtils.randomBoolean();
         float speed = MathUtils.random(BLIMP_MIN_SPEED, BLIMP_MAX_SPEED) * (movingRight ? 1f : -1f);
         float x = movingRight ? -Blimp.WIDTH / 2f : WORLD_WIDTH + Blimp.WIDTH / 2f;
-        float y = MathUtils.random(BLIMP_MIN_Y, BLIMP_MAX_Y);
+        float y = MathUtils.random(worldHeight * BLIMP_MIN_Y_FRACTION, worldHeight * BLIMP_MAX_Y_FRACTION);
 
         blimps.add(new Blimp(x, y, speed));
     }
@@ -285,7 +294,7 @@ public class GameScreen implements Screen {
     private void spawnBalloon() {
         float radius = MathUtils.random(24f, 34f);
         float x = MathUtils.random(radius, WORLD_WIDTH - radius);
-        float y = WORLD_HEIGHT + radius;
+        float y = worldHeight + radius;
 
         float maxSpeed = Math.min(MAX_FALL_SPEED_CAP, MAX_FALL_SPEED_BASE + difficultyTime * 1.2f);
         float fallSpeed = MathUtils.random(MIN_FALL_SPEED, maxSpeed);
@@ -342,7 +351,7 @@ public class GameScreen implements Screen {
         for (int i = basketballs.size - 1; i >= 0; i--) {
             Basketball ball = basketballs.get(i);
             ball.update(delta);
-            if (!ball.alive || ball.isOffScreen(WORLD_HEIGHT)) {
+            if (!ball.alive || ball.isOffScreen(worldHeight)) {
                 basketballs.removeIndex(i);
             }
         }
@@ -451,7 +460,7 @@ public class GameScreen implements Screen {
         float chipWidth = layout.width + 32f;
         float chipHeight = layout.height + 16f;
         float chipX = (WORLD_WIDTH - chipWidth) / 2f;
-        float chipY = GEAR_Y - chipHeight / 2f;
+        float chipY = iconRowY() - chipHeight / 2f;
 
         shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
         shapeRenderer.rect(chipX, chipY, chipWidth, chipHeight);
@@ -462,7 +471,7 @@ public class GameScreen implements Screen {
         hudFont.setColor(Color.WHITE);
         layout.setText(hudFont, text);
         float x = (WORLD_WIDTH - layout.width) / 2f;
-        float y = GEAR_Y + layout.height / 2f;
+        float y = iconRowY() + layout.height / 2f;
         hudFont.draw(batch, layout, x, y);
     }
 
@@ -481,39 +490,39 @@ public class GameScreen implements Screen {
 
     private void drawGearIcon() {
         shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
-        shapeRenderer.circle(GEAR_X, GEAR_Y, ICON_RADIUS, 24);
+        shapeRenderer.circle(GEAR_X, iconRowY(), ICON_RADIUS, 24);
 
         shapeRenderer.setColor(Color.WHITE);
         int points = GEAR_TEETH * 2;
         float prevX = GEAR_X + GEAR_TOOTH_R;
-        float prevY = GEAR_Y;
+        float prevY = iconRowY();
         for (int i = 1; i <= points; i++) {
             float angle = i * MathUtils.PI2 / points;
             float r = (i % 2 == 0) ? GEAR_TOOTH_R : GEAR_BASE_R;
             float x = GEAR_X + MathUtils.cos(angle) * r;
-            float y = GEAR_Y + MathUtils.sin(angle) * r;
-            shapeRenderer.triangle(GEAR_X, GEAR_Y, prevX, prevY, x, y);
+            float y = iconRowY() + MathUtils.sin(angle) * r;
+            shapeRenderer.triangle(GEAR_X, iconRowY(), prevX, prevY, x, y);
             prevX = x;
             prevY = y;
         }
 
         shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
-        shapeRenderer.circle(GEAR_X, GEAR_Y, GEAR_HOLE_R, 16);
+        shapeRenderer.circle(GEAR_X, iconRowY(), GEAR_HOLE_R, 16);
     }
 
     private void drawPauseButton() {
         shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
-        shapeRenderer.circle(PAUSE_X, PAUSE_Y, ICON_RADIUS, 24);
+        shapeRenderer.circle(PAUSE_X, iconRowY(), ICON_RADIUS, 24);
 
         shapeRenderer.setColor(Color.WHITE);
         if (state == State.PLAYING) {
-            shapeRenderer.rect(PAUSE_X - 10f, PAUSE_Y - 12f, 7f, 24f);
-            shapeRenderer.rect(PAUSE_X + 3f, PAUSE_Y - 12f, 7f, 24f);
+            shapeRenderer.rect(PAUSE_X - 10f, iconRowY() - 12f, 7f, 24f);
+            shapeRenderer.rect(PAUSE_X + 3f, iconRowY() - 12f, 7f, 24f);
         } else {
             shapeRenderer.triangle(
-                PAUSE_X - 9f, PAUSE_Y - 12f,
-                PAUSE_X - 9f, PAUSE_Y + 12f,
-                PAUSE_X + 12f, PAUSE_Y);
+                PAUSE_X - 9f, iconRowY() - 12f,
+                PAUSE_X - 9f, iconRowY() + 12f,
+                PAUSE_X + 12f, iconRowY());
         }
     }
 
@@ -524,7 +533,7 @@ public class GameScreen implements Screen {
 
     private void drawHud() {
         // Drawn below the gear/pause icon row (which occupies the very top corners) to avoid overlap.
-        float hudY = WORLD_HEIGHT - ICON_MARGIN - ICON_RADIUS - 16f;
+        float hudY = iconRowY() - ICON_RADIUS - 16f;
 
         hudFont.setColor(Color.WHITE);
         hudFont.draw(batch, "Score: " + score, 16, hudY);
@@ -536,28 +545,28 @@ public class GameScreen implements Screen {
 
     private void drawReadyOverlay() {
         titleFont.setColor(Color.WHITE);
-        centerText(titleFont, "BALLOON POP", WORLD_HEIGHT * 0.62f);
+        centerText(titleFont, "BALLOON POP", worldHeight * 0.62f);
 
         hudFont.setColor(Color.WHITE);
-        centerText(hudFont, "Drag anywhere to move & hold to fire", WORLD_HEIGHT * 0.52f);
-        centerText(hudFont, "Tap to start", WORLD_HEIGHT * 0.44f);
+        centerText(hudFont, "Drag anywhere to move & hold to fire", worldHeight * 0.52f);
+        centerText(hudFont, "Tap to start", worldHeight * 0.44f);
     }
 
     private void drawPausedOverlay() {
         titleFont.setColor(Color.WHITE);
-        centerText(titleFont, "PAUSED", WORLD_HEIGHT * 0.62f);
+        centerText(titleFont, "PAUSED", worldHeight * 0.62f);
 
         hudFont.setColor(Color.WHITE);
-        centerText(hudFont, "Tap to resume", WORLD_HEIGHT * 0.52f);
+        centerText(hudFont, "Tap to resume", worldHeight * 0.52f);
     }
 
     private void drawGameOverOverlay() {
         titleFont.setColor(Color.WHITE);
-        centerText(titleFont, "GAME OVER", WORLD_HEIGHT * 0.62f);
+        centerText(titleFont, "GAME OVER", worldHeight * 0.62f);
 
         hudFont.setColor(Color.WHITE);
-        centerText(hudFont, "Score: " + score, WORLD_HEIGHT * 0.52f);
-        centerText(hudFont, "Tap to play again", WORLD_HEIGHT * 0.44f);
+        centerText(hudFont, "Score: " + score, worldHeight * 0.52f);
+        centerText(hudFont, "Tap to play again", worldHeight * 0.44f);
     }
 
     private void centerText(BitmapFont font, String text, float y) {
@@ -568,6 +577,7 @@ public class GameScreen implements Screen {
     @Override
     public void resize(int width, int height) {
         viewport.update(width, height, true);
+        worldHeight = viewport.getWorldHeight();
     }
 
     @Override
