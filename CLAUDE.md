@@ -8,11 +8,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Standard two-module libGDX layout:
 - `core/` — a plain `java-library` module with zero Android dependencies. All game logic, screens, and entities live here.
-- `android/` — a thin Android application module that just launches the `core` game inside an `AndroidApplication`.
+- `android/` — a thin Android application module that launches the `core` game inside an `AndroidApplication` and puts it fullscreen (see `AndroidLauncher`).
 
 ## Build & run
 
-Requires JDK 17+ and an Android SDK (compileSdk/targetSdk 36, minSdk 21). Gradle 8.13 and AGP 8.13.2 are pinned; the Gradle wrapper handles the Gradle download.
+Requires JDK 17+ and an Android SDK (compileSdk/targetSdk 37, minSdk 21). Gradle 9.6.1 and AGP 9.3.0 are pinned; the Gradle wrapper handles the Gradle download.
 
 Before the first build, copy `local.properties.example` to `local.properties` and point `sdk.dir` at your Android SDK.
 
@@ -46,7 +46,7 @@ This dev environment (a proot-distro container on an aarch64 Android device) has
    ```
    Then create `local.properties` in the repo root with `sdk.dir=/root/coding/android-sdk`.
 
-3. **The actual blocker — aapt2 is x86_64-only, this device is aarch64**: AGP 8.13.2's Maven-resolved `aapt2` binary (and the SDK's own `build-tools/*/aapt2`) only ship as x86_64 Linux ELF binaries; there is no aarch64 build for this AGP version. Running `./gradlew android:assembleDebug` fails at `:android:processDebugResources` with `AAPT2 ... Daemon startup failed`. Fix by running the x86_64 `aapt2` under `qemu-x86_64` (already installed on this device via Termux at `/data/data/com.termux/files/usr/bin/qemu-x86_64`) against a minimal x86_64 glibc sysroot:
+3. **The actual blocker — aapt2 is x86_64-only, this device is aarch64**: AGP's Maven-resolved `aapt2` binary (and the SDK's own `build-tools/*/aapt2`) only ship as x86_64 Linux ELF binaries; there is no aarch64 build for this AGP version. Running `./gradlew android:assembleDebug` fails at `:android:processDebugResources` with `AAPT2 ... Daemon startup failed`. Fix by running the x86_64 `aapt2` under `qemu-x86_64` (already installed on this device via Termux at `/data/data/com.termux/files/usr/bin/qemu-x86_64`) against a minimal x86_64 glibc sysroot:
    ```sh
    # Build a small x86_64 sysroot (no root needed — dpkg-deb -x just unpacks)
    mkdir -p amd64root && cd amd64root

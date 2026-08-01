@@ -1,8 +1,8 @@
 apply plugin: 'com.android.application'
 
 android {
-    namespace 'com.joshreimer.balloonpop.android'
-    compileSdk 36
+    namespace = 'com.joshreimer.balloonpop.android'
+    compileSdk = 37
 
     sourceSets {
         main.assets.srcDirs += ['../assets']
@@ -10,25 +10,25 @@ android {
     }
 
     defaultConfig {
-        applicationId 'com.joshreimer.balloonpop'
-        minSdk 21
-        targetSdk 36
-        versionCode 1
-        versionName '1.0'
+        applicationId = 'com.joshreimer.balloonpop'
+        minSdk = 21
+        targetSdk = 37
+        versionCode = 1
+        versionName = '1.0'
     }
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_17
-        targetCompatibility JavaVersion.VERSION_17
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
     }
 
-    packagingOptions {
-        exclude 'META-INF/robovm/ios/robovm.xml'
+    packaging {
+        resources.excludes += 'META-INF/robovm/ios/robovm.xml'
     }
 
     buildTypes {
         release {
-            minifyEnabled false
+            minifyEnabled = false
         }
     }
 }
@@ -45,7 +45,7 @@ dependencies {
     natives "com.badlogicgames.gdx:gdx-platform:$gdxVersion:natives-x86_64"
 }
 
-task copyAndroidNatives {
+tasks.register('copyAndroidNatives') {
     doFirst {
         file("libs/armeabi-v7a/").mkdirs()
         file("libs/arm64-v8a/").mkdirs()

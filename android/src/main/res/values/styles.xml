@@ -1,4 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="GdxTheme" parent="android:Theme.NoTitleBar.Fullscreen" />
+    <style name="GdxTheme" parent="android:Theme.NoTitleBar.Fullscreen">
+        <!-- Black behind the GL surface so the launch window and any letterbox bars match the game. -->
+        <item name="android:windowBackground">@android:color/black</item>
+    </style>
 </resources>
