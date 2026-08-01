@@ -10,7 +10,7 @@ public class GameSettings {
     private static final String KEY_FIRE_RATE = "fireRateT";
     private static final String KEY_SPAWN_RATE = "spawnRateT";
 
-    public static final float MIN_FIRE_INTERVAL = 0.08f;
+    public static final float MIN_FIRE_INTERVAL = 0.035f;
     public static final float MAX_FIRE_INTERVAL = 0.45f;
     private static final float DEFAULT_FIRE_INTERVAL = 0.22f;
 

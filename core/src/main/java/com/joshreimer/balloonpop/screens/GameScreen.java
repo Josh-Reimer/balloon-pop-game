@@ -18,10 +18,12 @@ import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
 import com.joshreimer.balloonpop.entities.Balloon;
+import com.joshreimer.balloonpop.entities.BalloonCloud;
 import com.joshreimer.balloonpop.entities.Basketball;
 import com.joshreimer.balloonpop.entities.Blimp;
 import com.joshreimer.balloonpop.entities.Explosion;
 import com.joshreimer.balloonpop.entities.Gun;
+import com.joshreimer.balloonpop.entities.MuzzleFlash;
 
 public class GameScreen implements Screen {
 
@@ -41,7 +43,7 @@ public class GameScreen implements Screen {
     private static final float FIRE_VOLUME = 0.4f;
     private static final int FIRE_SCORE_PENALTY = 5;
     private static final float BURST_MESSAGE_DURATION = 1.4f;
-    private static final int FIRE_VIBRATION_MS = 15;
+    private static final int FIRE_VIBRATION_MS = 6;
 
     private static final float MIN_BLIMP_INTERVAL = 9f;
     private static final float MAX_BLIMP_INTERVAL = 18f;
@@ -80,6 +82,8 @@ public class GameScreen implements Screen {
     private final Array<Basketball> basketballs = new Array<>();
     private final Array<Blimp> blimps = new Array<>();
     private final Array<Explosion> explosions = new Array<>();
+    private final Array<BalloonCloud> balloonClouds = new Array<>();
+    private final Array<MuzzleFlash> muzzleFlashes = new Array<>();
 
     private final Sound popSound;
     private final Sound fireSound;
@@ -129,6 +133,8 @@ public class GameScreen implements Screen {
         basketballs.clear();
         blimps.clear();
         explosions.clear();
+        balloonClouds.clear();
+        muzzleFlashes.clear();
         score = 0;
         lives = (int) START_LIVES;
         bulletsFired = 0;
@@ -226,6 +232,9 @@ public class GameScreen implements Screen {
         updateFiring(delta);
         updateBasketballs(delta);
         updateExplosions(delta);
+        updateBalloonClouds(delta);
+        updateMuzzleFlashes(delta);
+        gun.update(delta);
         resolveCollisions();
 
         if (lives <= 0) {
@@ -310,6 +319,8 @@ public class GameScreen implements Screen {
             fireCooldown -= delta;
             if (fireCooldown <= 0f) {
                 basketballs.add(new Basketball(gun.getMuzzleX(), gun.getMuzzleY()));
+                muzzleFlashes.add(new MuzzleFlash(gun.getMuzzleX(), gun.getMuzzleY()));
+                gun.fire();
                 fireSound.play(FIRE_VOLUME, MathUtils.random(0.95f, 1.15f), 0f);
                 Gdx.input.vibrate(FIRE_VIBRATION_MS);
                 score -= FIRE_SCORE_PENALTY;
@@ -347,6 +358,26 @@ public class GameScreen implements Screen {
         }
     }
 
+    private void updateBalloonClouds(float delta) {
+        for (int i = balloonClouds.size - 1; i >= 0; i--) {
+            BalloonCloud c = balloonClouds.get(i);
+            c.update(delta);
+            if (!c.alive) {
+                balloonClouds.removeIndex(i);
+            }
+        }
+    }
+
+    private void updateMuzzleFlashes(float delta) {
+        for (int i = muzzleFlashes.size - 1; i >= 0; i--) {
+            MuzzleFlash f = muzzleFlashes.get(i);
+            f.update(delta);
+            if (!f.alive) {
+                muzzleFlashes.removeIndex(i);
+            }
+        }
+    }
+
     private void resolveCollisions() {
         for (int i = basketballs.size - 1; i >= 0; i--) {
             Basketball ball = basketballs.get(i);
@@ -360,7 +391,7 @@ public class GameScreen implements Screen {
                     b.pop();
                     score += b.points;
                     ball.alive = false;
-                    explosions.add(new Explosion(b.x, b.y, b.radius / 28f));
+                    balloonClouds.add(new BalloonCloud(b.x, b.y, b.radius / 28f, b.color));
                     popSound.play(POP_VOLUME, MathUtils.random(0.9f, 1.2f), 0f);
                     break;
                 }
@@ -397,7 +428,9 @@ public class GameScreen implements Screen {
         for (Balloon b : balloons) b.render(shapeRenderer);
         for (Basketball ball : basketballs) ball.render(shapeRenderer);
         gun.render(shapeRenderer);
+        for (MuzzleFlash f : muzzleFlashes) f.render(shapeRenderer);
         for (Explosion e : explosions) e.render(shapeRenderer);
+        for (BalloonCloud c : balloonClouds) c.render(shapeRenderer);
         drawGearIcon();
         drawBulletsGaugeBackground();
         if (state == State.PLAYING || state == State.PAUSED) drawPauseButton();
