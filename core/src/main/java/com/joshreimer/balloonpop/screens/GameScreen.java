@@ -39,9 +39,17 @@ public class GameScreen implements Screen {
     private static final float MAX_FALL_SPEED_BASE = 105f;
     private static final float MAX_FALL_SPEED_CAP = 260f;
 
+    private static final float MIN_BALLOON_RADIUS = 24f;
+    private static final float MAX_BALLOON_RADIUS = 34f;
+
+    // A pop is worth more the harder the balloon was to hit: small and fast pays MAX, big and
+    // slow pays MIN. Size and speed weigh equally.
+    private static final int MIN_BALLOON_POINTS = 4;
+    private static final int MAX_BALLOON_POINTS = 10;
+
     private static final float POP_VOLUME = 0.6f;
     private static final float FIRE_VOLUME = 0.4f;
-    private static final int FIRE_SCORE_PENALTY = 5;
+    private static final int FIRE_SCORE_PENALTY = 2;
     private static final float BURST_MESSAGE_DURATION = 1.4f;
     private static final int FIRE_VIBRATION_MS = 6;
 
@@ -292,14 +300,32 @@ public class GameScreen implements Screen {
     }
 
     private void spawnBalloon() {
-        float radius = MathUtils.random(24f, 34f);
+        float radius = MathUtils.random(MIN_BALLOON_RADIUS, MAX_BALLOON_RADIUS);
         float x = MathUtils.random(radius, WORLD_WIDTH - radius);
         float y = worldHeight + radius;
 
         float maxSpeed = Math.min(MAX_FALL_SPEED_CAP, MAX_FALL_SPEED_BASE + difficultyTime * 1.2f);
         float fallSpeed = MathUtils.random(MIN_FALL_SPEED, maxSpeed);
 
-        balloons.add(new Balloon(x, y, radius, fallSpeed));
+        balloons.add(new Balloon(x, y, radius, fallSpeed, pointsFor(radius, fallSpeed)));
+    }
+
+    /**
+     * Value of a pop, from MIN_BALLOON_POINTS to MAX_BALLOON_POINTS. Smaller balloons are a
+     * narrower target and faster ones give less time to line up, so each raises the payout;
+     * speed is judged against the whole run's range, not the current ramp, so a balloon worth 10
+     * only shows up once the difficulty ramp is producing near-cap fall speeds.
+     */
+    private int pointsFor(float radius, float fallSpeed) {
+        float smallness = 1f - normalize(radius, MIN_BALLOON_RADIUS, MAX_BALLOON_RADIUS);
+        float quickness = normalize(fallSpeed, MIN_FALL_SPEED, MAX_FALL_SPEED_CAP);
+        float difficulty = (smallness + quickness) / 2f;
+
+        return Math.round(MathUtils.lerp(MIN_BALLOON_POINTS, MAX_BALLOON_POINTS, difficulty));
+    }
+
+    private static float normalize(float value, float min, float max) {
+        return MathUtils.clamp((value - min) / (max - min), 0f, 1f);
     }
 
     private void updateBalloons(float delta) {
