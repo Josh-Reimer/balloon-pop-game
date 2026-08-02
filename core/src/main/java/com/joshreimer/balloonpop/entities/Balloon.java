@@ -4,7 +4,10 @@ import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 import com.badlogic.gdx.math.MathUtils;
 
-/** A balloon that falls from the top of the screen. Popping it awards points. */
+/**
+ * A balloon that falls from the top of the screen. Popping it awards {@code points}, which the
+ * spawner sets from how hard the balloon is to hit — see {@code GameScreen.pointsFor}.
+ */
 public class Balloon {
     private static final Color[] PALETTE = {
         new Color(0.90f, 0.20f, 0.25f, 1f),
@@ -27,13 +30,13 @@ public class Balloon {
     public boolean popping = false;
     private float popTimer = 0f;
 
-    public Balloon(float x, float y, float radius, float fallSpeed) {
+    public Balloon(float x, float y, float radius, float fallSpeed, int points) {
         this.x = x;
         this.y = y;
         this.radius = radius;
         this.fallSpeed = fallSpeed;
         this.color = PALETTE[MathUtils.random(PALETTE.length - 1)];
-        this.points = 10;
+        this.points = points;
     }
 
     public void update(float delta) {
