@@ -48,11 +48,13 @@ compile_sdk="$(grep -oE 'compileSdk\s*=\s*[0-9]+' "$REPO_DIR/android/build.gradl
 build_tools="${compile_sdk}.0.0"
 
 # Android's platform package naming changed at API 37: older levels are
-# "android-<N>" but 37+ are "android-<N>.0". Try the plain name first, then
-# the dotted variant, since we can't know which scheme a future SDK level uses.
+# "android-<N>" but 37+ are "android-<N>.0". Prefer whichever is already
+# installed; if neither is, try the plain name first and fall back to the
+# dotted variant below (we can't know in advance which scheme a future SDK
+# level will use).
 platform_dir="$SDK_DIR/platforms/android-${compile_sdk}"
 platform_pkg="platforms;android-${compile_sdk}"
-if [ ! -d "$platform_dir" ] && [ ! -d "${platform_dir}.0" ]; then
+if [ -d "${platform_dir}.0" ]; then
   platform_dir="${platform_dir}.0"
   platform_pkg="${platform_pkg}.0"
 fi
