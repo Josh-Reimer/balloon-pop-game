@@ -1,6 +1,5 @@
 package com.joshreimer.balloonpop.entities;
 
-import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer;
 
 /** The basketball-launching gun that slides left/right along the bottom of the screen. */
@@ -10,10 +9,6 @@ public class Gun {
     public static final float BARREL_WIDTH = 26f;
     public static final float BARREL_HEIGHT = 40f;
 
-    private static final Color BODY_COLOR = new Color(0.25f, 0.28f, 0.32f, 1f);
-    private static final Color BARREL_COLOR = new Color(0.15f, 0.16f, 0.19f, 1f);
-    private static final Color TRIM_COLOR = new Color(0.9f, 0.55f, 0.1f, 1f);
-
     private static final float RECOIL_KICK = 11f;
     private static final float RECOIL_RECOVERY_SPEED = 130f;
 
@@ -22,10 +17,20 @@ public class Gun {
     private final float worldWidth;
     private float recoil = 0f;
 
+    // Cosmetic only — see GunStyle. Kept in sync with GameSettings by GameScreen.show().
+    private GunStyle style = GunStyle.CLASSIC;
+    private int colorIndex = 0;
+
     public Gun(float startX, float y, float worldWidth) {
         this.x = startX;
         this.y = y;
         this.worldWidth = worldWidth;
+    }
+
+    /** Applies the player's chosen look. Affects rendering only, never firing position or timing. */
+    public void setSkin(GunStyle style, int colorIndex) {
+        this.style = style;
+        this.colorIndex = GunPalette.clamp(colorIndex);
     }
 
     /** Kicks the barrel back; call once per shot fired. */
@@ -58,16 +63,6 @@ public class Gun {
     }
 
     public void render(ShapeRenderer sr) {
-        float half = WIDTH / 2f;
-        float ry = y - recoil;
-
-        sr.setColor(BODY_COLOR);
-        sr.rect(x - half, ry, WIDTH, HEIGHT * 0.5f);
-
-        sr.setColor(BARREL_COLOR);
-        sr.rect(x - BARREL_WIDTH / 2f, ry + HEIGHT * 0.3f, BARREL_WIDTH, HEIGHT - HEIGHT * 0.3f);
-
-        sr.setColor(TRIM_COLOR);
-        sr.rect(x - half, ry + HEIGHT * 0.5f - 6f, WIDTH, 6f);
+        style.render(sr, x, y - recoil, colorIndex);
     }
 }

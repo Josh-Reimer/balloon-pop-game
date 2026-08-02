@@ -580,8 +580,11 @@ public class GameScreen implements Screen {
         worldHeight = viewport.getWorldHeight();
     }
 
+    /** Called on every navigation back from SettingsScreen, so a new gun skin takes effect at once. */
     @Override
-    public void show() {}
+    public void show() {
+        gun.setSkin(settings.getGunStyle(), settings.getGunColorIndex());
+    }
 
     @Override
     public void hide() {}
