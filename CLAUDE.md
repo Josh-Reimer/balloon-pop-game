@@ -27,7 +27,7 @@ There is no automated test suite and no CI configuration in this repo. `./gradle
 
 ### Building on this device (aarch64 proot environment)
 
-This dev environment (a proot-distro container on an aarch64 Android device) has no JDK and only a partial Android SDK preinstalled, and hits an architecture mismatch that a normal Linux/Mac/Windows dev machine never would. This is a one-time-per-session setup, not a project change:
+This dev environment (a proot-distro container on an aarch64 Android device) has no JDK and only a partial Android SDK preinstalled, and hits an architecture mismatch that a normal Linux/Mac/Windows dev machine never would. `scripts/build-termux.sh` automates all of the below (run with `bash scripts/build-termux.sh` — invoking it with `sh` breaks on `BASH_SOURCE`, and the executable bit doesn't reliably stick on this device's filesystem). It's idempotent: safe to re-run each session, since it detects what's already set up in stable (`~/tools`) paths and skips redoing it. The manual steps it automates:
 
 1. **JDK**: none is installed system-wide, and there's no root/sudo, so `apt`/`pkg install` fail. Download a portable Temurin 21 tarball for `linux/aarch64` from Adoptium and extract it (no root needed):
    ```sh
