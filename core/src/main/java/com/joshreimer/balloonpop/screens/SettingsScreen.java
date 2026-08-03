@@ -2,6 +2,7 @@ package com.joshreimer.balloonpop.screens;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Screen;
+import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
 import com.badlogic.gdx.graphics.OrthographicCamera;
@@ -17,6 +18,7 @@ import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
 import com.joshreimer.balloonpop.entities.GunPalette;
+import com.joshreimer.balloonpop.entities.SfxStyle;
 
 public class SettingsScreen implements Screen {
 
@@ -29,19 +31,26 @@ public class SettingsScreen implements Screen {
     private static final float HANDLE_RADIUS = 18f;
 
     private static final float TITLE_Y = 740f;
-    private static final float FIRE_TRACK_Y = 630f;
-    private static final float SPAWN_TRACK_Y = 500f;
+    private static final float FIRE_TRACK_Y = 650f;
+    private static final float SPAWN_TRACK_Y = 560f;
+
+    // "Customize your sound" section: arrows flanking a style label; tapping either arrow also
+    // plays the new pop sound, so the row doubles as its own live preview.
+    private static final float SFX_ROW_Y = 480f;
+    private static final float SFX_ARROW_RADIUS = 22f;
+    private static final float SFX_ARROW_TAP_RADIUS = SFX_ARROW_RADIUS + 12f;
+    private static final float SFX_ARROW_X_OFFSET = 130f;
 
     // "Customize your gun" section: a label, arrows flanking a live preview, then a swatch row.
-    private static final float GUN_LABEL_Y = 440f;
-    private static final float GUN_PREVIEW_BASE_Y = 260f;
+    private static final float GUN_LABEL_Y = 415f;
+    private static final float GUN_PREVIEW_BASE_Y = 255f;
     private static final float ARROW_Y = GUN_PREVIEW_BASE_Y + 45f;
     private static final float ARROW_RADIUS = 26f;
     private static final float ARROW_TAP_RADIUS = ARROW_RADIUS + 12f;
     private static final float LEFT_ARROW_X = 70f;
     private static final float RIGHT_ARROW_X = WORLD_WIDTH - LEFT_ARROW_X;
 
-    private static final float SWATCH_Y = 190f;
+    private static final float SWATCH_Y = 185f;
     private static final float SWATCH_RADIUS = 18f;
     private static final float SWATCH_TAP_RADIUS = SWATCH_RADIUS + 12f;
     private static final float SWATCH_SPACING = 68f;
@@ -66,6 +75,10 @@ public class SettingsScreen implements Screen {
 
     private final Vector3 touchWorld = new Vector3();
     private Slider draggingSlider = Slider.NONE;
+
+    // Lazily (re)loaded whenever the sfx style changes, so tapping the style arrows previews it.
+    private Sound previewSound;
+    private SfxStyle previewedStyle;
 
     public SettingsScreen(BalloonPopGame game, GameSettings settings) {
         this.game = game;
@@ -112,6 +125,12 @@ public class SettingsScreen implements Screen {
                 draggingSlider = Slider.FIRE;
             } else if (nearHandle(SPAWN_TRACK_Y, settings.getSpawnRateT())) {
                 draggingSlider = Slider.SPAWN;
+            } else if (within(WORLD_WIDTH / 2f - SFX_ARROW_X_OFFSET, SFX_ROW_Y, SFX_ARROW_TAP_RADIUS)) {
+                settings.cycleSfxStyle(-1);
+                playSfxPreview();
+            } else if (within(WORLD_WIDTH / 2f + SFX_ARROW_X_OFFSET, SFX_ROW_Y, SFX_ARROW_TAP_RADIUS)) {
+                settings.cycleSfxStyle(1);
+                playSfxPreview();
             } else if (within(LEFT_ARROW_X, ARROW_Y, ARROW_TAP_RADIUS)) {
                 settings.cycleGunStyle(-1);
             } else if (within(RIGHT_ARROW_X, ARROW_Y, ARROW_TAP_RADIUS)) {
@@ -134,6 +153,19 @@ public class SettingsScreen implements Screen {
                 settings.setSpawnRateT(t);
             }
         }
+    }
+
+    /** (Re)loads the pop sound for the currently selected style if needed, then plays it. */
+    private void playSfxPreview() {
+        SfxStyle style = settings.getSfxStyle();
+        if (style != previewedStyle) {
+            if (previewSound != null) {
+                previewSound.dispose();
+            }
+            previewSound = Gdx.audio.newSound(Gdx.files.internal(style.getPopPath()));
+            previewedStyle = style;
+        }
+        previewSound.play(1f);
     }
 
     private boolean nearHandle(float trackY, float t) {
@@ -163,6 +195,7 @@ public class SettingsScreen implements Screen {
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         drawSlider(FIRE_TRACK_Y, settings.getFireRateT());
         drawSlider(SPAWN_TRACK_Y, settings.getSpawnRateT());
+        drawSfxArrows();
         drawGunPreview();
         drawStyleArrows();
         drawColorSwatches();
@@ -200,19 +233,24 @@ public class SettingsScreen implements Screen {
     }
 
     private void drawStyleArrows() {
-        drawArrow(LEFT_ARROW_X, -1f);
-        drawArrow(RIGHT_ARROW_X, 1f);
+        drawArrow(LEFT_ARROW_X, ARROW_Y, ARROW_RADIUS, -1f);
+        drawArrow(RIGHT_ARROW_X, ARROW_Y, ARROW_RADIUS, 1f);
     }
 
-    private void drawArrow(float cx, float direction) {
+    private void drawSfxArrows() {
+        drawArrow(WORLD_WIDTH / 2f - SFX_ARROW_X_OFFSET, SFX_ROW_Y, SFX_ARROW_RADIUS, -1f);
+        drawArrow(WORLD_WIDTH / 2f + SFX_ARROW_X_OFFSET, SFX_ROW_Y, SFX_ARROW_RADIUS, 1f);
+    }
+
+    private void drawArrow(float cx, float cy, float radius, float direction) {
         shapeRenderer.setColor(PANEL_COLOR);
-        shapeRenderer.circle(cx, ARROW_Y, ARROW_RADIUS, 24);
+        shapeRenderer.circle(cx, cy, radius, 24);
 
         shapeRenderer.setColor(Color.WHITE);
         shapeRenderer.triangle(
-            cx - 8f * direction, ARROW_Y - 11f,
-            cx - 8f * direction, ARROW_Y + 11f,
-            cx + 10f * direction, ARROW_Y);
+            cx - 8f * direction, cy - 11f,
+            cx - 8f * direction, cy + 11f,
+            cx + 10f * direction, cy);
     }
 
     private void drawColorSwatches() {
@@ -241,6 +279,7 @@ public class SettingsScreen implements Screen {
         labelFont.setColor(Color.WHITE);
         centerText(labelFont, "Fire Rate: " + percent(settings.getFireRateT()), FIRE_TRACK_Y + 50f);
         centerText(labelFont, "Balloon Rate: " + percent(settings.getSpawnRateT()), SPAWN_TRACK_Y + 50f);
+        centerText(labelFont, "Sound: " + settings.getSfxStyle().getDisplayName(), SFX_ROW_Y - 6f);
         centerText(labelFont,
             "Gun: " + settings.getGunColorName() + " " + settings.getGunStyle().getDisplayName(),
             GUN_LABEL_Y);
@@ -283,5 +322,8 @@ public class SettingsScreen implements Screen {
         batch.dispose();
         titleFont.dispose();
         labelFont.dispose();
+        if (previewSound != null) {
+            previewSound.dispose();
+        }
     }
 }

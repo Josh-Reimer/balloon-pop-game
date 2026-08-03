@@ -24,6 +24,7 @@ import com.joshreimer.balloonpop.entities.Blimp;
 import com.joshreimer.balloonpop.entities.Explosion;
 import com.joshreimer.balloonpop.entities.Gun;
 import com.joshreimer.balloonpop.entities.MuzzleFlash;
+import com.joshreimer.balloonpop.entities.SfxStyle;
 
 public class GameScreen implements Screen {
 
@@ -114,8 +115,9 @@ public class GameScreen implements Screen {
     private final Array<MuzzleFlash> muzzleFlashes = new Array<>();
     private final Array<ScorePopup> scorePopups = new Array<>();
 
-    private final Sound popSound;
-    private final Sound fireSound;
+    private Sound popSound;
+    private Sound fireSound;
+    private SfxStyle loadedSfxStyle;
     private final Color scoreColor = new Color();
 
     private State state = State.READY;
@@ -163,8 +165,18 @@ public class GameScreen implements Screen {
 
         gun = new Gun(WORLD_WIDTH / 2f, GUN_Y, WORLD_WIDTH);
 
-        popSound = Gdx.audio.newSound(Gdx.files.internal("pop.wav"));
-        fireSound = Gdx.audio.newSound(Gdx.files.internal("fire.wav"));
+        loadSfx(settings.getSfxStyle());
+    }
+
+    /** (Re)loads the pop/fire sounds for the given style, disposing whatever was loaded before. */
+    private void loadSfx(SfxStyle style) {
+        if (popSound != null) {
+            popSound.dispose();
+            fireSound.dispose();
+        }
+        popSound = Gdx.audio.newSound(Gdx.files.internal(style.getPopPath()));
+        fireSound = Gdx.audio.newSound(Gdx.files.internal(style.getFirePath()));
+        loadedSfxStyle = style;
     }
 
     private void resetGame() {
@@ -711,10 +723,13 @@ public class GameScreen implements Screen {
         worldHeight = viewport.getWorldHeight();
     }
 
-    /** Called on every navigation back from SettingsScreen, so a new gun skin takes effect at once. */
+    /** Called on every navigation back from SettingsScreen, so a new gun skin/sfx style takes effect at once. */
     @Override
     public void show() {
         gun.setSkin(settings.getGunStyle(), settings.getGunColorIndex());
+        if (settings.getSfxStyle() != loadedSfxStyle) {
+            loadSfx(settings.getSfxStyle());
+        }
     }
 
     @Override
