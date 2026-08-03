@@ -53,6 +53,14 @@ public class GameScreen implements Screen {
     private static final float BURST_MESSAGE_DURATION = 1.4f;
     private static final int FIRE_VIBRATION_MS = 6;
 
+    private static final float SCORE_POPUP_DURATION = 0.8f;
+    private static final float SCORE_POPUP_RISE = 46f;
+    private static final float SCORE_POPUP_ARROW_WIDTH = 10f;
+    private static final float SCORE_POPUP_ARROW_HEIGHT = 12f;
+    private static final float SCORE_FLASH_DURATION = 0.5f;
+    private static final Color SCORE_POSITIVE_COLOR = new Color(0.25f, 0.85f, 0.35f, 1f);
+    private static final Color SCORE_NEGATIVE_COLOR = new Color(0.9f, 0.25f, 0.25f, 1f);
+
     private static final float MIN_BLIMP_INTERVAL = 9f;
     private static final float MAX_BLIMP_INTERVAL = 18f;
     private static final float BLIMP_MIN_SPEED = 80f;
@@ -72,6 +80,20 @@ public class GameScreen implements Screen {
 
     private enum State { READY, PLAYING, PAUSED, GAME_OVER }
 
+    /** A floating "+N"/"-N" indicator rising from the point a score change happened. */
+    private static class ScorePopup {
+        final float x;
+        final float startY;
+        final int amount;
+        float timer = SCORE_POPUP_DURATION;
+
+        ScorePopup(float x, float startY, int amount) {
+            this.x = x;
+            this.startY = startY;
+            this.amount = amount;
+        }
+    }
+
     private final BalloonPopGame game;
     private final GameSettings settings;
 
@@ -90,9 +112,11 @@ public class GameScreen implements Screen {
     private final Array<Explosion> explosions = new Array<>();
     private final Array<BalloonCloud> balloonClouds = new Array<>();
     private final Array<MuzzleFlash> muzzleFlashes = new Array<>();
+    private final Array<ScorePopup> scorePopups = new Array<>();
 
     private final Sound popSound;
     private final Sound fireSound;
+    private final Color scoreColor = new Color();
 
     private State state = State.READY;
     private int score = 0;
@@ -102,6 +126,9 @@ public class GameScreen implements Screen {
     private int burstShotCount = 0;
     private int lastBurstShotCount = 0;
     private float burstMessageTimer = 0f;
+
+    private float scoreFlashTimer = 0f;
+    private boolean scoreFlashPositive = false;
 
     private float spawnTimer = 0f;
     private float difficultyTime = 0f;
@@ -147,12 +174,14 @@ public class GameScreen implements Screen {
         explosions.clear();
         balloonClouds.clear();
         muzzleFlashes.clear();
+        scorePopups.clear();
         score = 0;
         lives = (int) START_LIVES;
         bulletsFired = 0;
         burstShotCount = 0;
         lastBurstShotCount = 0;
         burstMessageTimer = 0f;
+        scoreFlashTimer = 0f;
         spawnTimer = 0f;
         difficultyTime = 0f;
         fireCooldown = 0f;
@@ -251,6 +280,7 @@ public class GameScreen implements Screen {
         updateExplosions(delta);
         updateBalloonClouds(delta);
         updateMuzzleFlashes(delta);
+        updateScorePopups(delta);
         gun.update(delta);
         resolveCollisions();
 
@@ -328,6 +358,15 @@ public class GameScreen implements Screen {
         return MathUtils.clamp((value - min) / (max - min), 0f, 1f);
     }
 
+    /** Applies a score delta, spawns a floating +/-N indicator at (x, y), and flashes the HUD score. */
+    private void addScoreChange(int amount, float x, float y) {
+        if (amount == 0) return;
+        score += amount;
+        scorePopups.add(new ScorePopup(x, y, amount));
+        scoreFlashTimer = SCORE_FLASH_DURATION;
+        scoreFlashPositive = amount > 0;
+    }
+
     private void updateBalloons(float delta) {
         for (int i = balloons.size - 1; i >= 0; i--) {
             Balloon b = balloons.get(i);
@@ -358,7 +397,7 @@ public class GameScreen implements Screen {
                 gun.fire();
                 fireSound.play(FIRE_VOLUME, MathUtils.random(0.95f, 1.15f), 0f);
                 Gdx.input.vibrate(FIRE_VIBRATION_MS);
-                score -= FIRE_SCORE_PENALTY;
+                addScoreChange(-FIRE_SCORE_PENALTY, gun.getMuzzleX(), gun.getMuzzleY());
                 bulletsFired++;
                 burstShotCount++;
                 fireCooldown = fireInterval;
@@ -413,6 +452,29 @@ public class GameScreen implements Screen {
         }
     }
 
+    private void updateScorePopups(float delta) {
+        for (int i = scorePopups.size - 1; i >= 0; i--) {
+            ScorePopup p = scorePopups.get(i);
+            p.timer -= delta;
+            if (p.timer <= 0f) {
+                scorePopups.removeIndex(i);
+            }
+        }
+        if (scoreFlashTimer > 0f) {
+            scoreFlashTimer = Math.max(0f, scoreFlashTimer - delta);
+        }
+    }
+
+    /** Current rise/fade of a popup, shared by its arrow (shape pass) and its number (text pass). */
+    private float popupY(ScorePopup p) {
+        float progress = 1f - (p.timer / SCORE_POPUP_DURATION);
+        return p.startY + SCORE_POPUP_RISE * progress;
+    }
+
+    private float popupAlpha(ScorePopup p) {
+        return MathUtils.clamp(p.timer / SCORE_POPUP_DURATION, 0f, 1f);
+    }
+
     private void resolveCollisions() {
         for (int i = basketballs.size - 1; i >= 0; i--) {
             Basketball ball = basketballs.get(i);
@@ -424,7 +486,7 @@ public class GameScreen implements Screen {
 
                 if (ball.overlaps(b.x, b.y, b.radius)) {
                     b.pop();
-                    score += b.points;
+                    addScoreChange(b.points, b.x, b.y);
                     ball.alive = false;
                     balloonClouds.add(new BalloonCloud(b.x, b.y, b.radius / 28f, b.color));
                     popSound.play(POP_VOLUME, MathUtils.random(0.9f, 1.2f), 0f);
@@ -439,7 +501,7 @@ public class GameScreen implements Screen {
 
                 if (blimp.overlaps(ball.x, ball.y, Basketball.RADIUS)) {
                     blimp.pop();
-                    score += Blimp.POINTS;
+                    addScoreChange(Blimp.POINTS, blimp.x, blimp.y);
                     ball.alive = false;
                     explosions.add(new Explosion(blimp.x, blimp.y, Blimp.WIDTH / 50f));
                     popSound.play(POP_VOLUME, MathUtils.random(0.6f, 0.8f), 0f);
@@ -466,6 +528,7 @@ public class GameScreen implements Screen {
         for (MuzzleFlash f : muzzleFlashes) f.render(shapeRenderer);
         for (Explosion e : explosions) e.render(shapeRenderer);
         for (BalloonCloud c : balloonClouds) c.render(shapeRenderer);
+        drawScorePopupArrows();
         drawGearIcon();
         drawBulletsGaugeBackground();
         if (state == State.PLAYING || state == State.PAUSED) drawPauseButton();
@@ -475,6 +538,7 @@ public class GameScreen implements Screen {
         drawHud();
         drawBulletsGaugeText();
         drawBurstMessage();
+        drawScorePopupText();
         if (state == State.READY) drawReadyOverlay();
         if (state == State.PAUSED) drawPausedOverlay();
         if (state == State.GAME_OVER) drawGameOverOverlay();
@@ -552,6 +616,41 @@ public class GameScreen implements Screen {
         }
     }
 
+    private void drawScorePopupArrows() {
+        for (ScorePopup p : scorePopups) {
+            float y = popupY(p);
+            float alpha = popupAlpha(p);
+            boolean positive = p.amount > 0;
+
+            Color color = positive ? SCORE_POSITIVE_COLOR : SCORE_NEGATIVE_COLOR;
+            shapeRenderer.setColor(scoreColor.set(color).mul(1f, 1f, 1f, alpha));
+
+            float halfW = SCORE_POPUP_ARROW_WIDTH / 2f;
+            if (positive) {
+                shapeRenderer.triangle(
+                    p.x - halfW, y, p.x + halfW, y, p.x, y + SCORE_POPUP_ARROW_HEIGHT);
+            } else {
+                shapeRenderer.triangle(
+                    p.x - halfW, y + SCORE_POPUP_ARROW_HEIGHT, p.x + halfW, y + SCORE_POPUP_ARROW_HEIGHT, p.x, y);
+            }
+        }
+    }
+
+    private void drawScorePopupText() {
+        for (ScorePopup p : scorePopups) {
+            float y = popupY(p);
+            float alpha = popupAlpha(p);
+            boolean positive = p.amount > 0;
+
+            Color color = positive ? SCORE_POSITIVE_COLOR : SCORE_NEGATIVE_COLOR;
+            hudFont.setColor(scoreColor.set(color).mul(1f, 1f, 1f, alpha));
+            String text = (positive ? "+" : "") + p.amount;
+            layout.setText(hudFont, text);
+            hudFont.draw(batch, layout, p.x + SCORE_POPUP_ARROW_WIDTH, y + SCORE_POPUP_ARROW_HEIGHT / 2f - layout.height / 2f);
+        }
+        hudFont.setColor(Color.WHITE);
+    }
+
     private void drawGround() {
         shapeRenderer.setColor(new Color(0.35f, 0.65f, 0.3f, 1f));
         shapeRenderer.rect(0, 0, WORLD_WIDTH, GUN_Y);
@@ -561,8 +660,14 @@ public class GameScreen implements Screen {
         // Drawn below the gear/pause icon row (which occupies the very top corners) to avoid overlap.
         float hudY = iconRowY() - ICON_RADIUS - 16f;
 
-        hudFont.setColor(Color.WHITE);
+        if (scoreFlashTimer > 0f) {
+            Color flashColor = scoreFlashPositive ? SCORE_POSITIVE_COLOR : SCORE_NEGATIVE_COLOR;
+            hudFont.setColor(scoreColor.set(Color.WHITE).lerp(flashColor, scoreFlashTimer / SCORE_FLASH_DURATION));
+        } else {
+            hudFont.setColor(Color.WHITE);
+        }
         hudFont.draw(batch, "Score: " + score, 16, hudY);
+        hudFont.setColor(Color.WHITE);
 
         String livesText = "Lives: " + Math.max(0, lives);
         layout.setText(hudFont, livesText);
