@@ -442,16 +442,19 @@ public class GameScreen implements Screen {
     private void spawnAlien() {
         float x = MathUtils.random(Alien.CANOPY_WIDTH / 2f, WORLD_WIDTH - Alien.CANOPY_WIDTH / 2f);
         float y = worldHeight + Alien.BODY_HEIGHT / 2f + Alien.RIG_LENGTH + Alien.CANOPY_HEIGHT;
-        aliens.add(new Alien(x, y, ALIEN_FALL_SPEED));
+        aliens.add(new Alien(x, y, ALIEN_FALL_SPEED, GUN_Y));
     }
 
-    /** No life penalty for a missed alien -- like the blimp, it's a bonus, not a hazard. */
+    /**
+     * No life penalty for a missed alien -- like the blimp, it's a bonus, not a hazard. An
+     * un-popped alien lands and waddles off screen under its own steam instead of vanishing.
+     */
     private void updateAliens(float delta) {
         for (int i = aliens.size - 1; i >= 0; i--) {
             Alien a = aliens.get(i);
             a.update(delta);
 
-            if (a.hasFallenBelow(0f) || !a.alive) {
+            if (!a.alive || (!a.popping && a.isOffScreen(WORLD_WIDTH))) {
                 aliens.removeIndex(i);
             }
         }
