@@ -17,6 +17,7 @@ import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
+import com.joshreimer.balloonpop.entities.Asteroid;
 import com.joshreimer.balloonpop.entities.Balloon;
 import com.joshreimer.balloonpop.entities.BalloonCloud;
 import com.joshreimer.balloonpop.entities.Basketball;
@@ -69,6 +70,11 @@ public class GameScreen implements Screen {
     private static final float BLIMP_MIN_Y_FRACTION = 0.55f;
     private static final float BLIMP_MAX_Y_FRACTION = 0.85f;
 
+    // Asteroids fall like balloons but are rarer and pay triple what an equivalent balloon would.
+    private static final float MIN_ASTEROID_INTERVAL = 10f;
+    private static final float MAX_ASTEROID_INTERVAL = 20f;
+    private static final int ASTEROID_POINTS_MULTIPLIER = 3;
+
     private static final float ICON_MARGIN = 44f;
     private static final float ICON_RADIUS = 30f;
     private static final float GEAR_X = ICON_MARGIN;
@@ -108,6 +114,7 @@ public class GameScreen implements Screen {
 
     private final Gun gun;
     private final Array<Balloon> balloons = new Array<>();
+    private final Array<Asteroid> asteroids = new Array<>();
     private final Array<Basketball> basketballs = new Array<>();
     private final Array<Blimp> blimps = new Array<>();
     private final Array<Explosion> explosions = new Array<>();
@@ -136,6 +143,7 @@ public class GameScreen implements Screen {
     private float difficultyTime = 0f;
     private float fireCooldown = 0f;
     private float blimpSpawnTimer = 0f;
+    private float asteroidSpawnTimer = 0f;
     private boolean firing = false;
 
     private final Vector3 touchWorld = new Vector3();
@@ -181,6 +189,7 @@ public class GameScreen implements Screen {
 
     private void resetGame() {
         balloons.clear();
+        asteroids.clear();
         basketballs.clear();
         blimps.clear();
         explosions.clear();
@@ -198,6 +207,7 @@ public class GameScreen implements Screen {
         difficultyTime = 0f;
         fireCooldown = 0f;
         blimpSpawnTimer = MathUtils.random(MIN_BLIMP_INTERVAL, MAX_BLIMP_INTERVAL);
+        asteroidSpawnTimer = MathUtils.random(MIN_ASTEROID_INTERVAL, MAX_ASTEROID_INTERVAL);
         gun.setCenterX(WORLD_WIDTH / 2f);
     }
 
@@ -287,6 +297,8 @@ public class GameScreen implements Screen {
         updateBalloons(delta);
         updateBlimpSpawning(delta);
         updateBlimps(delta);
+        updateAsteroidSpawning(delta);
+        updateAsteroids(delta);
         updateFiring(delta);
         updateBasketballs(delta);
         updateExplosions(delta);
@@ -368,6 +380,42 @@ public class GameScreen implements Screen {
 
     private static float normalize(float value, float min, float max) {
         return MathUtils.clamp((value - min) / (max - min), 0f, 1f);
+    }
+
+    private void updateAsteroidSpawning(float delta) {
+        asteroidSpawnTimer -= delta;
+        if (asteroidSpawnTimer <= 0f) {
+            spawnAsteroid();
+            asteroidSpawnTimer = MathUtils.random(MIN_ASTEROID_INTERVAL, MAX_ASTEROID_INTERVAL);
+        }
+    }
+
+    private void spawnAsteroid() {
+        float radius = MathUtils.random(MIN_BALLOON_RADIUS, MAX_BALLOON_RADIUS);
+        float x = MathUtils.random(radius, WORLD_WIDTH - radius);
+        float y = worldHeight + radius;
+
+        float maxSpeed = Math.min(MAX_FALL_SPEED_CAP, MAX_FALL_SPEED_BASE + difficultyTime * 1.2f);
+        float fallSpeed = MathUtils.random(MIN_FALL_SPEED, maxSpeed);
+
+        int points = pointsFor(radius, fallSpeed) * ASTEROID_POINTS_MULTIPLIER;
+        asteroids.add(new Asteroid(x, y, radius, fallSpeed, points));
+    }
+
+    private void updateAsteroids(float delta) {
+        for (int i = asteroids.size - 1; i >= 0; i--) {
+            Asteroid a = asteroids.get(i);
+            a.update(delta);
+
+            if (a.hasFallenBelow(0f)) {
+                asteroids.removeIndex(i);
+                lives--;
+                continue;
+            }
+            if (!a.alive) {
+                asteroids.removeIndex(i);
+            }
+        }
     }
 
     /** Applies a score delta, spawns a floating +/-N indicator at (x, y), and flashes the HUD score. */
@@ -507,6 +555,21 @@ public class GameScreen implements Screen {
             }
             if (!ball.alive) continue;
 
+            for (int j = asteroids.size - 1; j >= 0; j--) {
+                Asteroid a = asteroids.get(j);
+                if (a.popping || !a.alive) continue;
+
+                if (ball.overlaps(a.x, a.y, a.radius)) {
+                    a.pop();
+                    addScoreChange(a.points, a.x, a.y);
+                    ball.alive = false;
+                    explosions.add(new Explosion(a.x, a.y, a.radius / 28f));
+                    popSound.play(POP_VOLUME, MathUtils.random(0.7f, 0.9f), 0f);
+                    break;
+                }
+            }
+            if (!ball.alive) continue;
+
             for (int j = blimps.size - 1; j >= 0; j--) {
                 Blimp blimp = blimps.get(j);
                 if (blimp.popping || !blimp.alive) continue;
@@ -535,6 +598,7 @@ public class GameScreen implements Screen {
         drawGround();
         for (Blimp b : blimps) b.render(shapeRenderer);
         for (Balloon b : balloons) b.render(shapeRenderer);
+        for (Asteroid a : asteroids) a.render(shapeRenderer);
         for (Basketball ball : basketballs) ball.render(shapeRenderer);
         gun.render(shapeRenderer);
         for (MuzzleFlash f : muzzleFlashes) f.render(shapeRenderer);
