@@ -15,6 +15,7 @@ public class GameSettings {
     private static final String KEY_GUN_STYLE = "gunStyle";
     private static final String KEY_GUN_COLOR = "gunColor";
     private static final String KEY_SFX_STYLE = "sfxStyle";
+    private static final String KEY_MUTED = "muted";
 
     public static final float MIN_FIRE_INTERVAL = 0.035f;
     public static final float MAX_FIRE_INTERVAL = 0.45f;
@@ -29,6 +30,7 @@ public class GameSettings {
     private int gunStyleIndex;
     private int gunColorIndex;
     private int sfxStyleIndex;
+    private boolean muted;
 
     public GameSettings() {
         Preferences prefs = Gdx.app.getPreferences(PREFS_NAME);
@@ -37,6 +39,7 @@ public class GameSettings {
         gunStyleIndex = MathUtils.clamp(prefs.getInteger(KEY_GUN_STYLE, 0), 0, GunStyle.values().length - 1);
         gunColorIndex = GunPalette.clamp(prefs.getInteger(KEY_GUN_COLOR, 0));
         sfxStyleIndex = MathUtils.clamp(prefs.getInteger(KEY_SFX_STYLE, 0), 0, SfxStyle.values().length - 1);
+        muted = prefs.getBoolean(KEY_MUTED, false);
     }
 
     /** Seconds between shots while firing. Lower fireRateT means slower (longer interval). */
@@ -97,6 +100,14 @@ public class GameSettings {
         sfxStyleIndex = ((sfxStyleIndex + step) % count + count) % count;
     }
 
+    public boolean isMuted() {
+        return muted;
+    }
+
+    public void setMuted(boolean muted) {
+        this.muted = muted;
+    }
+
     public void save() {
         Preferences prefs = Gdx.app.getPreferences(PREFS_NAME);
         prefs.putFloat(KEY_FIRE_RATE, fireRateT);
@@ -104,6 +115,7 @@ public class GameSettings {
         prefs.putInteger(KEY_GUN_STYLE, gunStyleIndex);
         prefs.putInteger(KEY_GUN_COLOR, gunColorIndex);
         prefs.putInteger(KEY_SFX_STYLE, sfxStyleIndex);
+        prefs.putBoolean(KEY_MUTED, muted);
         prefs.flush();
     }
 

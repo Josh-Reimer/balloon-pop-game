@@ -86,6 +86,7 @@ public class GameScreen implements Screen {
     private static final float ICON_RADIUS = 30f;
     private static final float GEAR_X = ICON_MARGIN;
     private static final float PAUSE_X = WORLD_WIDTH - ICON_MARGIN;
+    private static final float MUTE_X = GEAR_X + ICON_RADIUS * 2f + 20f;
 
     private static final int GEAR_TEETH = 8;
     private static final float GEAR_TOOTH_R = 15f;
@@ -196,6 +197,11 @@ public class GameScreen implements Screen {
         loadedSfxStyle = style;
     }
 
+    private void playIfUnmuted(Sound sound, float volume, float pitch) {
+        if (settings.isMuted()) return;
+        sound.play(volume, pitch, 0f);
+    }
+
     private void resetGame() {
         balloons.clear();
         asteroids.clear();
@@ -248,6 +254,13 @@ public class GameScreen implements Screen {
         if (justTouched && withinCircle(touchWorld.x, touchWorld.y, GEAR_X, iconRowY(), ICON_RADIUS)) {
             firing = false;
             game.showSettings();
+            return;
+        }
+
+        // The mute toggle is also always reachable, in every state, for the same reason.
+        if (justTouched && withinCircle(touchWorld.x, touchWorld.y, MUTE_X, iconRowY(), ICON_RADIUS)) {
+            settings.setMuted(!settings.isMuted());
+            settings.save();
             return;
         }
 
@@ -497,7 +510,7 @@ public class GameScreen implements Screen {
                 basketballs.add(new Basketball(gun.getMuzzleX(), gun.getMuzzleY()));
                 muzzleFlashes.add(new MuzzleFlash(gun.getMuzzleX(), gun.getMuzzleY()));
                 gun.fire();
-                fireSound.play(FIRE_VOLUME, MathUtils.random(0.95f, 1.15f), 0f);
+                playIfUnmuted(fireSound, FIRE_VOLUME, MathUtils.random(0.95f, 1.15f));
                 Gdx.input.vibrate(FIRE_VIBRATION_MS);
                 addScoreChange(-FIRE_SCORE_PENALTY, gun.getMuzzleX(), gun.getMuzzleY());
                 bulletsFired++;
@@ -591,7 +604,7 @@ public class GameScreen implements Screen {
                     addScoreChange(b.points, b.x, b.y);
                     ball.alive = false;
                     balloonClouds.add(new BalloonCloud(b.x, b.y, b.radius / 28f, b.color));
-                    popSound.play(POP_VOLUME, MathUtils.random(0.9f, 1.2f), 0f);
+                    playIfUnmuted(popSound, POP_VOLUME, MathUtils.random(0.9f, 1.2f));
                     break;
                 }
             }
@@ -606,7 +619,7 @@ public class GameScreen implements Screen {
                     addScoreChange(a.points, a.x, a.y);
                     ball.alive = false;
                     explosions.add(new Explosion(a.x, a.y, a.radius / 28f));
-                    popSound.play(POP_VOLUME, MathUtils.random(0.7f, 0.9f), 0f);
+                    playIfUnmuted(popSound, POP_VOLUME, MathUtils.random(0.7f, 0.9f));
                     break;
                 }
             }
@@ -621,7 +634,7 @@ public class GameScreen implements Screen {
                     addScoreChange(Blimp.POINTS, blimp.x, blimp.y);
                     ball.alive = false;
                     explosions.add(new Explosion(blimp.x, blimp.y, Blimp.WIDTH / 50f));
-                    popSound.play(POP_VOLUME, MathUtils.random(0.6f, 0.8f), 0f);
+                    playIfUnmuted(popSound, POP_VOLUME, MathUtils.random(0.6f, 0.8f));
                     break;
                 }
             }
@@ -636,7 +649,7 @@ public class GameScreen implements Screen {
                     addScoreChange(Alien.POINTS, alien.x, alien.y);
                     ball.alive = false;
                     explosions.add(new Explosion(alien.x, alien.y, Alien.RADIUS / 28f));
-                    popSound.play(POP_VOLUME, MathUtils.random(0.8f, 1.0f), 0f);
+                    playIfUnmuted(popSound, POP_VOLUME, MathUtils.random(0.8f, 1.0f));
                     break;
                 }
             }
@@ -664,6 +677,7 @@ public class GameScreen implements Screen {
         for (BalloonCloud c : balloonClouds) c.render(shapeRenderer);
         drawScorePopupArrows();
         drawGearIcon();
+        drawMuteIcon();
         drawBulletsGaugeBackground();
         if (state == State.PLAYING || state == State.PAUSED) drawPauseButton();
         shapeRenderer.end();
@@ -732,6 +746,27 @@ public class GameScreen implements Screen {
 
         shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
         shapeRenderer.circle(GEAR_X, iconRowY(), GEAR_HOLE_R, 16);
+    }
+
+    /** A speaker icon: sound-wave arcs when audio is on, a diagonal strike-through when muted. */
+    private void drawMuteIcon() {
+        float cy = iconRowY();
+        shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
+        shapeRenderer.circle(MUTE_X, cy, ICON_RADIUS, 24);
+
+        shapeRenderer.setColor(Color.WHITE);
+        shapeRenderer.rect(MUTE_X - 13f, cy - 6f, 7f, 12f);
+        shapeRenderer.triangle(MUTE_X - 6f, cy - 6f, MUTE_X - 6f, cy + 6f, MUTE_X + 7f, cy + 13f);
+        shapeRenderer.triangle(MUTE_X - 6f, cy - 6f, MUTE_X + 7f, cy + 13f, MUTE_X + 7f, cy - 13f);
+
+        if (settings.isMuted()) {
+            shapeRenderer.setColor(SCORE_NEGATIVE_COLOR);
+            shapeRenderer.rectLine(MUTE_X - 16f, cy - 16f, MUTE_X + 16f, cy + 16f, 4f);
+        } else {
+            shapeRenderer.rectLine(MUTE_X + 12f, cy - 4f, MUTE_X + 16f, cy - 8f, 3f);
+            shapeRenderer.rectLine(MUTE_X + 16f, cy - 8f, MUTE_X + 16f, cy + 8f, 3f);
+            shapeRenderer.rectLine(MUTE_X + 16f, cy + 8f, MUTE_X + 12f, cy + 4f, 3f);
+        }
     }
 
     private void drawPauseButton() {
