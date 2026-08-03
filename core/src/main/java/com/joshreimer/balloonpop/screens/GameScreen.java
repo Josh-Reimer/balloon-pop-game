@@ -17,6 +17,7 @@ import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
+import com.joshreimer.balloonpop.entities.Alien;
 import com.joshreimer.balloonpop.entities.Asteroid;
 import com.joshreimer.balloonpop.entities.Balloon;
 import com.joshreimer.balloonpop.entities.BalloonCloud;
@@ -75,6 +76,12 @@ public class GameScreen implements Screen {
     private static final float MAX_ASTEROID_INTERVAL = 20f;
     private static final int ASTEROID_POINTS_MULTIPLIER = 3;
 
+    // Aliens are a rare bonus that drifts down slowly under a parachute; like the blimp, missing
+    // one costs nothing -- it's pure upside, not a hazard.
+    private static final float MIN_ALIEN_INTERVAL = 12f;
+    private static final float MAX_ALIEN_INTERVAL = 22f;
+    private static final float ALIEN_FALL_SPEED = 42f;
+
     private static final float ICON_MARGIN = 44f;
     private static final float ICON_RADIUS = 30f;
     private static final float GEAR_X = ICON_MARGIN;
@@ -115,6 +122,7 @@ public class GameScreen implements Screen {
     private final Gun gun;
     private final Array<Balloon> balloons = new Array<>();
     private final Array<Asteroid> asteroids = new Array<>();
+    private final Array<Alien> aliens = new Array<>();
     private final Array<Basketball> basketballs = new Array<>();
     private final Array<Blimp> blimps = new Array<>();
     private final Array<Explosion> explosions = new Array<>();
@@ -144,6 +152,7 @@ public class GameScreen implements Screen {
     private float fireCooldown = 0f;
     private float blimpSpawnTimer = 0f;
     private float asteroidSpawnTimer = 0f;
+    private float alienSpawnTimer = 0f;
     private boolean firing = false;
 
     private final Vector3 touchWorld = new Vector3();
@@ -190,6 +199,7 @@ public class GameScreen implements Screen {
     private void resetGame() {
         balloons.clear();
         asteroids.clear();
+        aliens.clear();
         basketballs.clear();
         blimps.clear();
         explosions.clear();
@@ -208,6 +218,7 @@ public class GameScreen implements Screen {
         fireCooldown = 0f;
         blimpSpawnTimer = MathUtils.random(MIN_BLIMP_INTERVAL, MAX_BLIMP_INTERVAL);
         asteroidSpawnTimer = MathUtils.random(MIN_ASTEROID_INTERVAL, MAX_ASTEROID_INTERVAL);
+        alienSpawnTimer = MathUtils.random(MIN_ALIEN_INTERVAL, MAX_ALIEN_INTERVAL);
         gun.setCenterX(WORLD_WIDTH / 2f);
     }
 
@@ -299,6 +310,8 @@ public class GameScreen implements Screen {
         updateBlimps(delta);
         updateAsteroidSpawning(delta);
         updateAsteroids(delta);
+        updateAlienSpawning(delta);
+        updateAliens(delta);
         updateFiring(delta);
         updateBasketballs(delta);
         updateExplosions(delta);
@@ -414,6 +427,32 @@ public class GameScreen implements Screen {
             }
             if (!a.alive) {
                 asteroids.removeIndex(i);
+            }
+        }
+    }
+
+    private void updateAlienSpawning(float delta) {
+        alienSpawnTimer -= delta;
+        if (alienSpawnTimer <= 0f) {
+            spawnAlien();
+            alienSpawnTimer = MathUtils.random(MIN_ALIEN_INTERVAL, MAX_ALIEN_INTERVAL);
+        }
+    }
+
+    private void spawnAlien() {
+        float x = MathUtils.random(Alien.CANOPY_WIDTH / 2f, WORLD_WIDTH - Alien.CANOPY_WIDTH / 2f);
+        float y = worldHeight + Alien.BODY_HEIGHT / 2f + Alien.RIG_LENGTH + Alien.CANOPY_HEIGHT;
+        aliens.add(new Alien(x, y, ALIEN_FALL_SPEED));
+    }
+
+    /** No life penalty for a missed alien -- like the blimp, it's a bonus, not a hazard. */
+    private void updateAliens(float delta) {
+        for (int i = aliens.size - 1; i >= 0; i--) {
+            Alien a = aliens.get(i);
+            a.update(delta);
+
+            if (a.hasFallenBelow(0f) || !a.alive) {
+                aliens.removeIndex(i);
             }
         }
     }
@@ -583,6 +622,21 @@ public class GameScreen implements Screen {
                     break;
                 }
             }
+            if (!ball.alive) continue;
+
+            for (int j = aliens.size - 1; j >= 0; j--) {
+                Alien alien = aliens.get(j);
+                if (alien.popping || !alien.alive) continue;
+
+                if (alien.overlaps(ball.x, ball.y, Basketball.RADIUS)) {
+                    alien.pop();
+                    addScoreChange(Alien.POINTS, alien.x, alien.y);
+                    ball.alive = false;
+                    explosions.add(new Explosion(alien.x, alien.y, Alien.RADIUS / 28f));
+                    popSound.play(POP_VOLUME, MathUtils.random(0.8f, 1.0f), 0f);
+                    break;
+                }
+            }
         }
     }
 
@@ -597,6 +651,7 @@ public class GameScreen implements Screen {
         shapeRenderer.begin(ShapeRenderer.ShapeType.Filled);
         drawGround();
         for (Blimp b : blimps) b.render(shapeRenderer);
+        for (Alien a : aliens) a.render(shapeRenderer);
         for (Balloon b : balloons) b.render(shapeRenderer);
         for (Asteroid a : asteroids) a.render(shapeRenderer);
         for (Basketball ball : basketballs) ball.render(shapeRenderer);
