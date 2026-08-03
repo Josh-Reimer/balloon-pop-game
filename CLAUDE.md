@@ -71,6 +71,14 @@ This dev environment (a proot-distro container on an aarch64 Android device) has
 
    Once wrapped, `./gradlew android:assembleDebug` succeeds normally. Since the wrapper lives under `~/.gradle/caches` (content-hash-keyed, and untouched by a plain rebuild) it survives repeat builds within the same environment, but not across a fresh container/session — redo this setup if `assembleDebug` again fails at `processDebugResources` with a daemon startup error.
 
+4. **`git push` needs `gh` on `PATH`**: there are no stored git credentials (`https` remote, no credential helper configured), so a plain `git push` fails with `fatal: could not read Username for 'https://github.com'`. The `gh` CLI is installed and already authenticated as `Josh-Reimer`, but lives at `/home/coder/tools/gh_<version>_linux_arm64/bin/gh`, which isn't on `PATH` by default. Fix per-shell:
+   ```sh
+   export PATH="/home/coder/tools/gh_2.97.0_linux_arm64/bin:$PATH"
+   gh auth setup-git   # wires gh in as git's credential helper for github.com
+   git push
+   ```
+   `gh auth setup-git` only needs to run once per shell/session before the first push; after that, plain `git push`/`git pull` in that same shell work normally.
+
 ## Architecture
 
 **Entry point / screen management** (`BalloonPopGame`, extends libGDX `Game`): creates a single `GameSettings` instance plus two long-lived screens — `GameScreen` and `SettingsScreen` — once in `create()`, then switches between them via `showGame()` / `showSettings()`. Screens are never recreated on navigation; `BalloonPopGame.dispose()` explicitly disposes both regardless of which is currently active. This matters because libGDX's default `Game.dispose()` only disposes the *current* screen — recreating a screen per navigation instead of reusing the persistent instance would leak its `ShapeRenderer`/`SpriteBatch`/fonts/sounds every time.
