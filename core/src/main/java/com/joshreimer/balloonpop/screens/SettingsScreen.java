@@ -17,6 +17,7 @@ import com.badlogic.gdx.utils.viewport.FitViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
+import com.joshreimer.balloonpop.entities.Basketball;
 import com.joshreimer.balloonpop.entities.GunPalette;
 import com.joshreimer.balloonpop.entities.SfxStyle;
 
@@ -30,27 +31,32 @@ public class SettingsScreen implements Screen {
     private static final float TRACK_HEIGHT = 10f;
     private static final float HANDLE_RADIUS = 18f;
 
-    private static final float TITLE_Y = 740f;
-    private static final float FIRE_TRACK_Y = 650f;
-    private static final float SPAWN_TRACK_Y = 560f;
+    private static final float TITLE_Y = 772f;
+    private static final float FIRE_TRACK_Y = 665f;
+    private static final float SPAWN_TRACK_Y = 585f;
 
     // "Customize your sound" section: arrows flanking a style label; tapping either arrow also
     // plays the new pop sound, so the row doubles as its own live preview.
-    private static final float SFX_ROW_Y = 480f;
+    private static final float SFX_ROW_Y = 505f;
     private static final float SFX_ARROW_RADIUS = 22f;
     private static final float SFX_ARROW_TAP_RADIUS = SFX_ARROW_RADIUS + 12f;
     private static final float SFX_ARROW_X_OFFSET = 130f;
 
+    // "Customize your ammo" section: the same arrow pair, with the chosen round drawn live between
+    // them at the size it is actually fired at.
+    private static final float AMMO_ROW_Y = 428f;
+    private static final float AMMO_PREVIEW_SCALE = 2.2f;
+
     // "Customize your gun" section: a label, arrows flanking a live preview, then a swatch row.
-    private static final float GUN_LABEL_Y = 415f;
-    private static final float GUN_PREVIEW_BASE_Y = 255f;
+    private static final float GUN_LABEL_Y = 342f;
+    private static final float GUN_PREVIEW_BASE_Y = 215f;
     private static final float ARROW_Y = GUN_PREVIEW_BASE_Y + 45f;
     private static final float ARROW_RADIUS = 26f;
     private static final float ARROW_TAP_RADIUS = ARROW_RADIUS + 12f;
     private static final float LEFT_ARROW_X = 70f;
     private static final float RIGHT_ARROW_X = WORLD_WIDTH - LEFT_ARROW_X;
 
-    private static final float SWATCH_Y = 185f;
+    private static final float SWATCH_Y = 155f;
     private static final float SWATCH_RADIUS = 18f;
     private static final float SWATCH_TAP_RADIUS = SWATCH_RADIUS + 12f;
     private static final float SWATCH_SPACING = 68f;
@@ -131,6 +137,10 @@ public class SettingsScreen implements Screen {
             } else if (within(WORLD_WIDTH / 2f + SFX_ARROW_X_OFFSET, SFX_ROW_Y, SFX_ARROW_TAP_RADIUS)) {
                 settings.cycleSfxStyle(1);
                 playSfxPreview();
+            } else if (within(WORLD_WIDTH / 2f - SFX_ARROW_X_OFFSET, AMMO_ROW_Y, SFX_ARROW_TAP_RADIUS)) {
+                settings.cycleAmmoStyle(-1);
+            } else if (within(WORLD_WIDTH / 2f + SFX_ARROW_X_OFFSET, AMMO_ROW_Y, SFX_ARROW_TAP_RADIUS)) {
+                settings.cycleAmmoStyle(1);
             } else if (within(LEFT_ARROW_X, ARROW_Y, ARROW_TAP_RADIUS)) {
                 settings.cycleGunStyle(-1);
             } else if (within(RIGHT_ARROW_X, ARROW_Y, ARROW_TAP_RADIUS)) {
@@ -196,6 +206,7 @@ public class SettingsScreen implements Screen {
         drawSlider(FIRE_TRACK_Y, settings.getFireRateT());
         drawSlider(SPAWN_TRACK_Y, settings.getSpawnRateT());
         drawSfxArrows();
+        drawAmmoRow();
         drawGunPreview();
         drawStyleArrows();
         drawColorSwatches();
@@ -242,6 +253,15 @@ public class SettingsScreen implements Screen {
         drawArrow(WORLD_WIDTH / 2f + SFX_ARROW_X_OFFSET, SFX_ROW_Y, SFX_ARROW_RADIUS, 1f);
     }
 
+    /** The chosen round, drawn live between its arrows so tapping either updates it immediately. */
+    private void drawAmmoRow() {
+        drawArrow(WORLD_WIDTH / 2f - SFX_ARROW_X_OFFSET, AMMO_ROW_Y, SFX_ARROW_RADIUS, -1f);
+        drawArrow(WORLD_WIDTH / 2f + SFX_ARROW_X_OFFSET, AMMO_ROW_Y, SFX_ARROW_RADIUS, 1f);
+
+        settings.getAmmoStyle().render(
+            shapeRenderer, WORLD_WIDTH / 2f, AMMO_ROW_Y, Basketball.RADIUS * AMMO_PREVIEW_SCALE);
+    }
+
     private void drawArrow(float cx, float cy, float radius, float direction) {
         shapeRenderer.setColor(PANEL_COLOR);
         shapeRenderer.circle(cx, cy, radius, 24);
@@ -280,6 +300,7 @@ public class SettingsScreen implements Screen {
         centerText(labelFont, "Fire Rate: " + percent(settings.getFireRateT()), FIRE_TRACK_Y + 50f);
         centerText(labelFont, "Balloon Rate: " + percent(settings.getSpawnRateT()), SPAWN_TRACK_Y + 50f);
         centerText(labelFont, "Sound: " + settings.getSfxStyle().getDisplayName(), SFX_ROW_Y - 6f);
+        centerText(labelFont, "Ammo: " + settings.getAmmoStyle().getDisplayName(), AMMO_ROW_Y - 38f);
         centerText(labelFont,
             "Gun: " + settings.getGunColorName() + " " + settings.getGunStyle().getDisplayName(),
             GUN_LABEL_Y);

@@ -18,6 +18,7 @@ import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
 import com.joshreimer.balloonpop.entities.Alien;
+import com.joshreimer.balloonpop.entities.AmmoStyle;
 import com.joshreimer.balloonpop.entities.Asteroid;
 import com.joshreimer.balloonpop.entities.Balloon;
 import com.joshreimer.balloonpop.entities.BalloonCloud;
@@ -27,6 +28,7 @@ import com.joshreimer.balloonpop.entities.Explosion;
 import com.joshreimer.balloonpop.entities.Gun;
 import com.joshreimer.balloonpop.entities.MuzzleFlash;
 import com.joshreimer.balloonpop.entities.SfxStyle;
+import com.joshreimer.balloonpop.entities.WaterSplash;
 
 public class GameScreen implements Screen {
 
@@ -82,6 +84,26 @@ public class GameScreen implements Screen {
     private static final float MAX_ALIEN_INTERVAL = 22f;
     private static final float ALIEN_FALL_SPEED = 42f;
 
+    // Overheat: the barrel gives out after this many shots and has to be doused before it will
+    // fire again. See beginOverheat() for the sequence.
+    private static final int OVERHEAT_SHOT_LIMIT = 267;
+    private static final int OVERHEAT_ALIENS_REQUIRED = 3;
+    private static final int OVERHEAT_ALIEN_PENALTY = 15;
+    private static final int OVERHEAT_CLOUD_SIZE = 5;
+    private static final float OVERHEAT_ALIEN_SPAWN_INTERVAL = 0.7f;
+    // Much faster than a bonus alien's drift: the player can't shoot during an overheat, so a
+    // leisurely descent is dead time rather than tension.
+    private static final float OVERHEAT_ALIEN_FALL_SPEED = 150f;
+    private static final float OVERHEAT_ALIEN_STANDOFF = 58f;
+    private static final float OVERHEAT_BANNER_BLINK_RATE = 3.2f;
+
+    // Heat wisps rising off the barrel while it's overheated.
+    private static final int HEAT_WISP_COUNT = 5;
+    private static final float HEAT_WISP_RISE = 70f;
+    private static final float HEAT_WISP_PERIOD = 1.1f;
+    private static final Color HEAT_COLOR = new Color(0.92f, 0.32f, 0.12f, 1f);
+    private static final Color HEAT_COLOR_HOT = new Color(1f, 0.72f, 0.2f, 1f);
+
     private static final float ICON_MARGIN = 44f;
     private static final float ICON_RADIUS = 30f;
     private static final float GEAR_X = ICON_MARGIN;
@@ -94,6 +116,13 @@ public class GameScreen implements Screen {
     private static final float GEAR_HOLE_R = 5f;
 
     private enum State { READY, PLAYING, PAUSED, GAME_OVER }
+
+    /**
+     * Sub-phase of {@link State#PLAYING} covering the overheat penalty round. NONE is normal play;
+     * SWARM is aliens raining down while the player waits for three of them to reach the ground;
+     * DOUSING is the one carrying the bucket walking over to the gun and tipping it.
+     */
+    private enum Overheat { NONE, SWARM, DOUSING }
 
     /** A floating "+N"/"-N" indicator rising from the point a score change happened. */
     private static class ScorePopup {
@@ -129,6 +158,7 @@ public class GameScreen implements Screen {
     private final Array<Explosion> explosions = new Array<>();
     private final Array<BalloonCloud> balloonClouds = new Array<>();
     private final Array<MuzzleFlash> muzzleFlashes = new Array<>();
+    private final Array<WaterSplash> waterSplashes = new Array<>();
     private final Array<ScorePopup> scorePopups = new Array<>();
 
     private Sound popSound;
@@ -155,6 +185,15 @@ public class GameScreen implements Screen {
     private float asteroidSpawnTimer = 0f;
     private float alienSpawnTimer = 0f;
     private boolean firing = false;
+
+    private Overheat overheat = Overheat.NONE;
+    private int shotsSinceCooldown = 0;
+    private int overheatLanded = 0;
+    private int overheatSpawned = 0;
+    private float overheatSpawnTimer = 0f;
+    private float overheatTime = 0f;
+    private Alien douser = null;
+    private boolean dousePoured = false;
 
     private final Vector3 touchWorld = new Vector3();
 
@@ -211,10 +250,18 @@ public class GameScreen implements Screen {
         explosions.clear();
         balloonClouds.clear();
         muzzleFlashes.clear();
+        waterSplashes.clear();
         scorePopups.clear();
         score = 0;
         lives = (int) START_LIVES;
         bulletsFired = 0;
+        overheat = Overheat.NONE;
+        shotsSinceCooldown = 0;
+        overheatLanded = 0;
+        overheatSpawned = 0;
+        overheatTime = 0f;
+        douser = null;
+        dousePoured = false;
         burstShotCount = 0;
         lastBurstShotCount = 0;
         burstMessageTimer = 0f;
@@ -280,7 +327,11 @@ public class GameScreen implements Screen {
                     break;
                 }
                 if (touched) {
-                    gun.setCenterX(touchWorld.x);
+                    // The gun stays put once an alien is walking a bucket over to it, so it isn't
+                    // dragged out from under the pour. Firing is gated separately, in updateFiring.
+                    if (overheat != Overheat.DOUSING) {
+                        gun.setCenterX(touchWorld.x);
+                    }
                     firing = true;
                 } else {
                     firing = false;
@@ -317,19 +368,26 @@ public class GameScreen implements Screen {
     private void update(float delta) {
         difficultyTime += delta;
 
-        updateSpawning(delta);
+        // Nothing new falls out of the sky during an overheat except the alien swarm itself.
+        if (overheat == Overheat.NONE) {
+            updateSpawning(delta);
+            updateBlimpSpawning(delta);
+            updateAsteroidSpawning(delta);
+            updateAlienSpawning(delta);
+        } else {
+            updateOverheat(delta);
+        }
+
         updateBalloons(delta);
-        updateBlimpSpawning(delta);
         updateBlimps(delta);
-        updateAsteroidSpawning(delta);
         updateAsteroids(delta);
-        updateAlienSpawning(delta);
         updateAliens(delta);
         updateFiring(delta);
         updateBasketballs(delta);
         updateExplosions(delta);
         updateBalloonClouds(delta);
         updateMuzzleFlashes(delta);
+        updateWaterSplashes(delta);
         updateScorePopups(delta);
         gun.update(delta);
         resolveCollisions();
@@ -459,18 +517,177 @@ public class GameScreen implements Screen {
     }
 
     /**
-     * No life penalty for a missed alien -- like the blimp, it's a bonus, not a hazard. An
-     * un-popped alien lands and waddles off screen under its own steam instead of vanishing.
+     * No life penalty for a missed alien -- like the blimp, it's a bonus, not a hazard, and that
+     * holds for the overheat swarm too: those cost points, never a life. An un-popped alien lands
+     * and waddles off screen under its own steam instead of vanishing.
      */
     private void updateAliens(float delta) {
         for (int i = aliens.size - 1; i >= 0; i--) {
             Alien a = aliens.get(i);
             a.update(delta);
 
+            // Every alien of the swarm that reaches the ground unshot docks the player points.
+            if (a.landedThisFrame && a.holdOnLanding) {
+                overheatLanded++;
+                addScoreChange(-OVERHEAT_ALIEN_PENALTY, a.x, a.y);
+            }
+
             if (!a.alive || (!a.popping && a.isOffScreen(WORLD_WIDTH))) {
                 aliens.removeIndex(i);
             }
         }
+    }
+
+    /**
+     * The barrel has given out after OVERHEAT_SHOT_LIMIT shots. Firing is locked out, the sky is
+     * cleared of anything still falling (no balloons fall during an overheat, and the ones already
+     * in the air aren't the player's fault), and a cloud of aliens is sent down in their place.
+     * Play resumes once three aliens are on the ground and one has doused the gun — see
+     * {@link #updateOverheat} and {@link #beginDousing}.
+     */
+    private void beginOverheat() {
+        overheat = Overheat.SWARM;
+        overheatLanded = 0;
+        overheatSpawned = 0;
+        overheatSpawnTimer = 0f;
+        overheatTime = 0f;
+        douser = null;
+        dousePoured = false;
+        firing = false;
+
+        // Popped rather than deleted, so the sky visibly clears instead of things blinking out.
+        // No points either way: the player didn't shoot these.
+        for (Balloon b : balloons) {
+            if (!b.popping) {
+                b.pop();
+                balloonClouds.add(new BalloonCloud(b.x, b.y, b.radius / 28f, b.color));
+            }
+        }
+        for (Asteroid a : asteroids) {
+            if (!a.popping) {
+                a.pop();
+                explosions.add(new Explosion(a.x, a.y, a.radius / 28f));
+            }
+        }
+    }
+
+    /**
+     * Keeps the swarm topped up until three aliens have landed, then hands over to the dousing.
+     * Aliens are spawned a few at a time rather than all at once so they arrive in a steady drizzle,
+     * and more keep coming if in-flight shots knock some of them down before they touch the ground.
+     */
+    private void updateOverheat(float delta) {
+        overheatTime += delta;
+
+        if (overheat == Overheat.SWARM) {
+            overheatSpawnTimer -= delta;
+            if (overheatSpawnTimer <= 0f && overheatSpawned < OVERHEAT_CLOUD_SIZE) {
+                spawnOverheatAlien();
+                overheatSpawnTimer = OVERHEAT_ALIEN_SPAWN_INTERVAL;
+            }
+            // The cloud is exhausted but not enough of it made it down — send another wave.
+            if (overheatSpawned >= OVERHEAT_CLOUD_SIZE && countFallingOverheatAliens() == 0
+                && overheatLanded < OVERHEAT_ALIENS_REQUIRED) {
+                overheatSpawned = 0;
+            }
+            if (overheatLanded >= OVERHEAT_ALIENS_REQUIRED) {
+                beginDousing();
+            }
+            return;
+        }
+
+        // DOUSING: wait for the bucket carrier to reach the gun, tip it, and for the water to finish.
+        if (douser == null || !douser.alive) {
+            endOverheat();
+            return;
+        }
+        if (!dousePoured && douser.isStanding()) {
+            douser.faceToward(gun.getCenterX());
+            douser.pour();
+            dousePoured = true;
+            waterSplashes.add(new WaterSplash(
+                douser.getBucketX(), douser.getBucketY(),
+                gun.getCenterX(), GUN_Y + Gun.HEIGHT, GUN_Y));
+            playIfUnmuted(popSound, POP_VOLUME, 0.55f);
+        }
+        if (dousePoured && waterSplashes.size == 0) {
+            endOverheat();
+        }
+    }
+
+    private void spawnOverheatAlien() {
+        float x = MathUtils.random(Alien.CANOPY_WIDTH / 2f, WORLD_WIDTH - Alien.CANOPY_WIDTH / 2f);
+        float y = worldHeight + Alien.BODY_HEIGHT / 2f + Alien.RIG_LENGTH + Alien.CANOPY_HEIGHT;
+        Alien alien = new Alien(x, y, OVERHEAT_ALIEN_FALL_SPEED, GUN_Y);
+        alien.holdOnLanding = true;
+        aliens.add(alien);
+        overheatSpawned++;
+    }
+
+    private int countFallingOverheatAliens() {
+        int count = 0;
+        for (Alien a : aliens) {
+            if (a.holdOnLanding && a.alive && !a.popping && !a.isOnGround()) count++;
+        }
+        return count;
+    }
+
+    /** Picks the landed alien nearest the gun and sends it over with the bucket. */
+    private void beginDousing() {
+        Alien nearest = null;
+        float bestDistance = Float.MAX_VALUE;
+        for (Alien a : aliens) {
+            if (!a.holdOnLanding || !a.alive || a.popping || !a.isStanding()) continue;
+            float distance = Math.abs(a.x - gun.getCenterX());
+            if (distance < bestDistance) {
+                bestDistance = distance;
+                nearest = a;
+            }
+        }
+        if (nearest == null) {
+            // Every candidate was shot out from under us between landing and now; keep waiting.
+            overheatLanded = Math.max(0, overheatLanded - 1);
+            return;
+        }
+
+        overheat = Overheat.DOUSING;
+        douser = nearest;
+        douser.giveBucket();
+        // Stands to whichever side of the gun it's already on, so it doesn't walk through it.
+        float side = douser.x <= gun.getCenterX() ? -1f : 1f;
+        douser.walkTo(MathUtils.clamp(
+            gun.getCenterX() + side * OVERHEAT_ALIEN_STANDOFF, 20f, WORLD_WIDTH - 20f));
+    }
+
+    /** Water's done: the barrel is cool, the aliens wander off, and normal play resumes. */
+    private void endOverheat() {
+        overheat = Overheat.NONE;
+        shotsSinceCooldown = 0;
+        douser = null;
+        dousePoured = false;
+
+        // Clearing the flag matters as much as releasing them: any of the swarm still in the air
+        // reverts to an ordinary bonus alien, so it lands and waddles off rather than standing
+        // around forever waiting for a release that only the *next* overheat would give it.
+        for (Alien a : aliens) {
+            if (!a.holdOnLanding) continue;
+            a.holdOnLanding = false;
+            if (a.isOnGround()) {
+                a.walkAway();
+            }
+        }
+
+        // Give the player a beat before the first balloon of the new round arrives.
+        spawnTimer = settings.getBaseSpawnInterval();
+        blimpSpawnTimer = MathUtils.random(MIN_BLIMP_INTERVAL, MAX_BLIMP_INTERVAL);
+        asteroidSpawnTimer = MathUtils.random(MIN_ASTEROID_INTERVAL, MAX_ASTEROID_INTERVAL);
+        alienSpawnTimer = MathUtils.random(MIN_ALIEN_INTERVAL, MAX_ALIEN_INTERVAL);
+    }
+
+    /** 0..1 fraction of the way to an overheat; drives the HUD gauge fill. */
+    private float heatFraction() {
+        if (overheat != Overheat.NONE) return 1f;
+        return MathUtils.clamp((float) shotsSinceCooldown / OVERHEAT_SHOT_LIMIT, 0f, 1f);
     }
 
     /** Applies a score delta, spawns a floating +/-N indicator at (x, y), and flashes the HUD score. */
@@ -504,10 +721,10 @@ public class GameScreen implements Screen {
         }
 
         float fireInterval = settings.getFireInterval();
-        if (firing) {
+        if (firing && overheat == Overheat.NONE) {
             fireCooldown -= delta;
             if (fireCooldown <= 0f) {
-                basketballs.add(new Basketball(gun.getMuzzleX(), gun.getMuzzleY()));
+                basketballs.add(new Basketball(gun.getMuzzleX(), gun.getMuzzleY(), settings.getAmmoStyle()));
                 muzzleFlashes.add(new MuzzleFlash(gun.getMuzzleX(), gun.getMuzzleY()));
                 gun.fire();
                 playIfUnmuted(fireSound, FIRE_VOLUME, MathUtils.random(0.95f, 1.15f));
@@ -515,7 +732,12 @@ public class GameScreen implements Screen {
                 addScoreChange(-FIRE_SCORE_PENALTY, gun.getMuzzleX(), gun.getMuzzleY());
                 bulletsFired++;
                 burstShotCount++;
+                shotsSinceCooldown++;
                 fireCooldown = fireInterval;
+
+                if (shotsSinceCooldown >= OVERHEAT_SHOT_LIMIT) {
+                    beginOverheat();
+                }
             }
         } else {
             fireCooldown = Math.min(fireCooldown, fireInterval * 0.5f);
@@ -563,6 +785,16 @@ public class GameScreen implements Screen {
             f.update(delta);
             if (!f.alive) {
                 muzzleFlashes.removeIndex(i);
+            }
+        }
+    }
+
+    private void updateWaterSplashes(float delta) {
+        for (int i = waterSplashes.size - 1; i >= 0; i--) {
+            WaterSplash w = waterSplashes.get(i);
+            w.update(delta);
+            if (!w.alive) {
+                waterSplashes.removeIndex(i);
             }
         }
     }
@@ -672,9 +904,11 @@ public class GameScreen implements Screen {
         for (Asteroid a : asteroids) a.render(shapeRenderer);
         for (Basketball ball : basketballs) ball.render(shapeRenderer);
         gun.render(shapeRenderer);
+        if (overheat != Overheat.NONE) drawHeatWisps();
         for (MuzzleFlash f : muzzleFlashes) f.render(shapeRenderer);
         for (Explosion e : explosions) e.render(shapeRenderer);
         for (BalloonCloud c : balloonClouds) c.render(shapeRenderer);
+        for (WaterSplash w : waterSplashes) w.render(shapeRenderer);
         drawScorePopupArrows();
         drawGearIcon();
         drawMuteIcon();
@@ -686,6 +920,7 @@ public class GameScreen implements Screen {
         drawHud();
         drawBulletsGaugeText();
         drawBurstMessage();
+        if (overheat != Overheat.NONE) drawOverheatBanner();
         drawScorePopupText();
         if (state == State.READY) drawReadyOverlay();
         if (state == State.PAUSED) drawPausedOverlay();
@@ -693,8 +928,12 @@ public class GameScreen implements Screen {
         batch.end();
     }
 
+    /**
+     * The bullet chip doubles as the heat gauge: it fills left-to-right with barrel heat as the
+     * shot count climbs toward OVERHEAT_SHOT_LIMIT, so the overheat never arrives unannounced.
+     */
     private void drawBulletsGaugeBackground() {
-        layout.setText(hudFont, "Bullets: " + bulletsFired);
+        layout.setText(hudFont, bulletsGaugeText());
         float chipWidth = layout.width + 32f;
         float chipHeight = layout.height + 16f;
         float chipX = (WORLD_WIDTH - chipWidth) / 2f;
@@ -702,15 +941,66 @@ public class GameScreen implements Screen {
 
         shapeRenderer.setColor(new Color(0.25f, 0.28f, 0.32f, 1f));
         shapeRenderer.rect(chipX, chipY, chipWidth, chipHeight);
+
+        float heat = heatFraction();
+        if (heat > 0f) {
+            shapeRenderer.setColor(scoreColor.set(HEAT_COLOR_HOT).lerp(HEAT_COLOR, heat));
+            shapeRenderer.rect(chipX, chipY, chipWidth * heat, chipHeight);
+        }
     }
 
     private void drawBulletsGaugeText() {
-        String text = "Bullets: " + bulletsFired;
+        String text = bulletsGaugeText();
         hudFont.setColor(Color.WHITE);
         layout.setText(hudFont, text);
         float x = (WORLD_WIDTH - layout.width) / 2f;
         float y = iconRowY() + layout.height / 2f;
         hudFont.draw(batch, layout, x, y);
+    }
+
+    private String bulletsGaugeText() {
+        return overheat == Overheat.NONE ? "Bullets: " + bulletsFired : "OVERHEATED";
+    }
+
+    /** Flame-coloured wisps curling off the barrel of an overheated gun. */
+    private void drawHeatWisps() {
+        float muzzleX = gun.getMuzzleX();
+        float muzzleY = gun.getMuzzleY();
+
+        for (int i = 0; i < HEAT_WISP_COUNT; i++) {
+            // Staggered so the wisps stream continuously instead of pulsing together.
+            float t = ((overheatTime / HEAT_WISP_PERIOD) + (float) i / HEAT_WISP_COUNT) % 1f;
+            float rise = HEAT_WISP_RISE * t;
+            float wobble = MathUtils.sin(t * MathUtils.PI2 * 1.5f + i) * 12f;
+            float radius = 7f * MathUtils.sin(t * MathUtils.PI);
+            if (radius <= 0.5f) continue;
+
+            shapeRenderer.setColor(scoreColor.set(HEAT_COLOR_HOT).lerp(HEAT_COLOR, t));
+            shapeRenderer.circle(muzzleX + wobble, muzzleY + rise, radius, 10);
+        }
+    }
+
+    /**
+     * The overheat message, blinking above the gun. Doubles as the progress readout for the wait:
+     * the player has no other way to know how many aliens still have to come down.
+     */
+    private void drawOverheatBanner() {
+        boolean blinkOn = MathUtils.sin(overheatTime * OVERHEAT_BANNER_BLINK_RATE) > -0.35f;
+        float y = iconRowY() - ICON_RADIUS - 90f;
+
+        if (blinkOn) {
+            hudFont.setColor(SCORE_NEGATIVE_COLOR);
+            centerText(hudFont, "!! GUN OVERHEATED !!", y);
+        }
+
+        hudFont.setColor(Color.WHITE);
+        if (overheat == Overheat.SWARM) {
+            int remaining = Math.max(0, OVERHEAT_ALIENS_REQUIRED - overheatLanded);
+            centerText(hudFont, "Aliens still to land: " + remaining, y - 34f);
+        } else {
+            centerText(hudFont, dousePoured ? "Cooling the barrel..." : "Here comes the water...", y - 34f);
+        }
+        hudFont.setColor(Color.WHITE);
     }
 
     private void drawBurstMessage() {

@@ -11,6 +11,10 @@ import com.badlogic.gdx.math.MathUtils;
  * {@link ShapeRenderer}'s coloured triangle/rect overloads rather than a single flat fill. It
  * squirms in its harness while falling, and if it isn't popped in time it lands, sheds the
  * parachute, and waddles off screen instead of simply vanishing.
+ *
+ * <p>Aliens in the overheat swarm ({@code GameScreen.beginOverheat}) set {@link #holdOnLanding} so
+ * they stand around on the ground instead of leaving, since the sequence needs three of them
+ * present and one of them to walk a bucket of water over to the gun.
  */
 public class Alien {
     public static final float BODY_WIDTH = 22f;
@@ -52,8 +56,11 @@ public class Alien {
     // used both to trigger landing and to snap the alien onto the ground at that moment.
     private static final float FEET_OFFSET = BODY_HEIGHT / 2f + LEG_LENGTH;
 
-    // Waddling-away walk cycle, once landed.
+    // Waddling-away walk cycle, once landed. An alien with somewhere to actually be (walkTo, i.e.
+    // the one bringing water to an overheated gun) hurries instead of ambling — at the idle speed
+    // it could spend ten seconds crossing the screen while the player waits on it.
     private static final float WALK_SPEED = 26f;
+    private static final float HURRY_WALK_SPEED = 95f;
     private static final float STRIDE_LENGTH = 26f;
     private static final float LEG_SWING_AMP = 0.5f;
     private static final float ARM_SWING_AMP = 0.4f;
@@ -65,12 +72,24 @@ public class Alien {
     private static final float PARACHUTE_DRIFT_DISTANCE = 50f;
     private static final float PARACHUTE_FADE_DURATION = 0.6f;
 
+    // Standing idle: a slow breathing bob, so a waiting alien doesn't look like a frozen sprite.
+    private static final float IDLE_BOB_FREQ = 1.6f;
+    private static final float IDLE_BOB_AMOUNT = 1.6f;
+
+    // The bucket of water carried over to an overheated gun, hung off the outer arm.
+    private static final float BUCKET_WIDTH = 15f;
+    private static final float BUCKET_HEIGHT = 13f;
+    private static final float POUR_ARM_ANGLE = 2.1f; // radians from hanging straight down
+    private static final Color BUCKET_COLOR = new Color(0.55f, 0.58f, 0.62f, 1f);
+    private static final Color BUCKET_RIM_COLOR = new Color(0.75f, 0.78f, 0.82f, 1f);
+    private static final Color WATER_COLOR = new Color(0.25f, 0.6f, 0.95f, 1f);
+
     private static final Color TOP_COLOR = new Color(0.25f, 0.85f, 0.4f, 1f);
     private static final Color BOTTOM_COLOR = new Color(0.2f, 0.5f, 0.9f, 1f);
     private static final Color CANOPY_EDGE_COLOR = new Color(0.15f, 0.35f, 0.55f, 1f);
     private static final Color EYE_COLOR = new Color(0.05f, 0.08f, 0.1f, 1f);
 
-    private enum Phase { FALLING, WALKING }
+    private enum Phase { FALLING, WALKING, STANDING, POURING }
 
     private final float baseX;
     private final float groundY;
@@ -79,6 +98,13 @@ public class Alien {
 
     public boolean alive = true;
     public boolean popping = false;
+
+    /** When set before landing, the alien stands where it lands instead of waddling off screen. */
+    public boolean holdOnLanding = false;
+
+    /** True for the single frame on which this alien touched down; read by {@code GameScreen}. */
+    public boolean landedThisFrame = false;
+
     private float popTimer = 0f;
     private float age = 0f;
 
@@ -87,6 +113,11 @@ public class Alien {
     private float walkedDistance = 0f;
     private float parachuteFade = 0f;
     private float detachedCanopyX, detachedCanopyY;
+
+    // Set by walkTo(): the alien walks to this x and stops, rather than walking off screen.
+    private boolean hasWalkTarget = false;
+    private float walkTargetX = 0f;
+    private boolean carryingBucket = false;
 
     private final float swayPhase;
     private final float armPhaseL;
@@ -117,6 +148,8 @@ public class Alien {
     }
 
     public void update(float delta) {
+        landedThisFrame = false;
+
         if (popping) {
             popTimer += delta;
             if (popTimer >= POP_DURATION) {
@@ -125,31 +158,109 @@ public class Alien {
             return;
         }
 
+        age += delta;
+
         if (phase == Phase.FALLING) {
-            age += delta;
             y -= fallSpeed * delta;
             x = baseX + MathUtils.sin(age * SWAY_FREQUENCY + swayPhase) * SWAY_AMPLITUDE;
             if (y - FEET_OFFSET <= groundY) {
                 land();
             }
-        } else {
-            x += walkDir * WALK_SPEED * delta;
-            walkedDistance += WALK_SPEED * delta;
-            if (parachuteFade > 0f) {
-                parachuteFade = Math.max(0f, parachuteFade - delta / PARACHUTE_FADE_DURATION);
+            return;
+        }
+
+        if (parachuteFade > 0f) {
+            parachuteFade = Math.max(0f, parachuteFade - delta / PARACHUTE_FADE_DURATION);
+        }
+
+        if (phase == Phase.WALKING) {
+            float speed = hasWalkTarget ? HURRY_WALK_SPEED : WALK_SPEED;
+            float step = walkDir * speed * delta;
+            if (hasWalkTarget && Math.abs(walkTargetX - x) <= Math.abs(step)) {
+                x = walkTargetX;
+                stand();
+            } else {
+                x += step;
+                walkedDistance += speed * delta;
             }
         }
     }
 
-    /** Cuts the parachute loose, snaps the alien onto the ground, and sends it off waddling. */
+    /**
+     * Cuts the parachute loose and snaps the alien onto the ground. It waddles off screen from
+     * there unless {@link #holdOnLanding} was set, in which case it stands and waits.
+     */
     private void land() {
         detachedCanopyX = x;
         detachedCanopyY = y + BODY_HEIGHT / 2f + RIG_LENGTH;
-        phase = Phase.WALKING;
         y = groundY + FEET_OFFSET;
-        walkDir = MathUtils.randomBoolean() ? 1f : -1f;
-        walkedDistance = 0f;
         parachuteFade = 1f;
+        landedThisFrame = true;
+
+        if (holdOnLanding) {
+            walkDir = MathUtils.randomBoolean() ? 1f : -1f;
+            stand();
+        } else {
+            walkAway();
+        }
+    }
+
+    /** Plants the alien where it is, legs together (stride phase 0) and breathing gently. */
+    private void stand() {
+        phase = Phase.STANDING;
+        walkedDistance = 0f;
+        hasWalkTarget = false;
+    }
+
+    /** Sends the alien waddling off whichever side it happens to be facing, never to return. */
+    public void walkAway() {
+        if (phase == Phase.FALLING) return;
+        phase = Phase.WALKING;
+        hasWalkTarget = false;
+        walkDir = MathUtils.randomBoolean() ? 1f : -1f;
+    }
+
+    /** Walks a landed alien over to {@code targetX}, where it stops and stands again. */
+    public void walkTo(float targetX) {
+        if (phase == Phase.FALLING) return;
+        phase = Phase.WALKING;
+        hasWalkTarget = true;
+        walkTargetX = targetX;
+        walkDir = targetX >= x ? 1f : -1f;
+    }
+
+    /** Turns a standing alien to face {@code targetX} — it may have arrived walking backwards away from it. */
+    public void faceToward(float targetX) {
+        walkDir = targetX >= x ? 1f : -1f;
+    }
+
+    /** True once a landed alien is standing still — either waiting, or arrived at its walk target. */
+    public boolean isStanding() {
+        return phase == Phase.STANDING;
+    }
+
+    public boolean isOnGround() {
+        return phase != Phase.FALLING;
+    }
+
+    /** Hangs a bucket of water off the alien's outer arm. */
+    public void giveBucket() {
+        carryingBucket = true;
+    }
+
+    /** Raises and tips the bucket; the water itself is a separate {@code WaterSplash} effect. */
+    public void pour() {
+        phase = Phase.POURING;
+        hasWalkTarget = false;
+    }
+
+    /** World position of the tipped bucket's lip — where a pour should start from. */
+    public float getBucketX() {
+        return x + walkDir * (BODY_WIDTH / 3f + MathUtils.sin(POUR_ARM_ANGLE) * ARM_LENGTH);
+    }
+
+    public float getBucketY() {
+        return y + BODY_HEIGHT / 2f - MathUtils.cos(POUR_ARM_ANGLE) * ARM_LENGTH;
     }
 
     public void pop() {
@@ -236,14 +347,19 @@ public class Alien {
         }
     }
 
+    /** Shared by every on-the-ground phase; a standing alien is just one with a frozen stride. */
     private void renderWalking(ShapeRenderer sr, float scale) {
         if (parachuteFade > 0f) {
             renderDetachedParachute(sr);
         }
 
+        boolean walking = phase == Phase.WALKING;
         float facing = walkDir;
-        float phase = walkedDistance / STRIDE_LENGTH * MathUtils.PI2;
-        float bodyY = y + Math.abs(MathUtils.sin(phase)) * BODY_BOB_AMOUNT * scale;
+        float stride = walkedDistance / STRIDE_LENGTH * MathUtils.PI2;
+        float bob = walking
+            ? Math.abs(MathUtils.sin(stride)) * BODY_BOB_AMOUNT
+            : (MathUtils.sin(age * IDLE_BOB_FREQ) * 0.5f + 0.5f) * IDLE_BOB_AMOUNT;
+        float bodyY = y + bob * scale;
 
         float topY = bodyY + BODY_HEIGHT / 2f * scale + HEAD_RY * 1.8f * scale;
         float botY = bodyY - BODY_HEIGHT / 2f * scale - LEG_LENGTH * scale;
@@ -251,8 +367,8 @@ public class Alien {
         float hipY = bodyY - BODY_HEIGHT / 2f * scale;
         float hipLX = x - BODY_WIDTH / 2f * 0.35f * scale;
         float hipRX = x + BODY_WIDTH / 2f * 0.35f * scale;
-        float legThetaL = facing * MathUtils.sin(phase) * LEG_SWING_AMP;
-        float legThetaR = facing * MathUtils.sin(phase + MathUtils.PI) * LEG_SWING_AMP;
+        float legThetaL = facing * MathUtils.sin(stride) * LEG_SWING_AMP;
+        float legThetaR = facing * MathUtils.sin(stride + MathUtils.PI) * LEG_SWING_AMP;
         renderLimb(sr, hipLX, hipY, legThetaL, LEG_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
         renderLimb(sr, hipRX, hipY, legThetaR, LEG_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
 
@@ -261,10 +377,32 @@ public class Alien {
         float shoulderY = bodyY + BODY_HEIGHT / 2f * scale;
         float shoulderLX = x - BODY_WIDTH / 3f * scale;
         float shoulderRX = x + BODY_WIDTH / 3f * scale;
-        float armThetaL = facing * MathUtils.sin(phase + MathUtils.PI) * ARM_SWING_AMP;
-        float armThetaR = facing * MathUtils.sin(phase) * ARM_SWING_AMP;
-        renderLimb(sr, shoulderLX, shoulderY, armThetaL, ARM_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
-        renderLimb(sr, shoulderRX, shoulderY, armThetaR, ARM_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
+        float armThetaL = facing * MathUtils.sin(stride + MathUtils.PI) * ARM_SWING_AMP;
+        float armThetaR = facing * MathUtils.sin(stride) * ARM_SWING_AMP;
+
+        // The bucket rides on whichever arm is on the side the alien faces, and that arm swings up
+        // over its head while pouring rather than swinging with the stride.
+        float carryThetaL = armThetaL;
+        float carryThetaR = armThetaR;
+        if (phase == Phase.POURING) {
+            if (facing >= 0f) {
+                carryThetaR = POUR_ARM_ANGLE;
+            } else {
+                carryThetaL = -POUR_ARM_ANGLE;
+            }
+        }
+
+        renderLimb(sr, shoulderLX, shoulderY, carryThetaL, ARM_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
+        renderLimb(sr, shoulderRX, shoulderY, carryThetaR, ARM_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
+
+        if (carryingBucket) {
+            float carryShoulderX = facing >= 0f ? shoulderRX : shoulderLX;
+            float carryTheta = facing >= 0f ? carryThetaR : carryThetaL;
+            renderBucket(sr,
+                carryShoulderX + MathUtils.sin(carryTheta) * ARM_LENGTH * scale,
+                shoulderY - MathUtils.cos(carryTheta) * ARM_LENGTH * scale,
+                scale, phase == Phase.POURING ? facing : 0f);
+        }
 
         float headTilt = facing * HEAD_WALK_LEAN;
         float headY = bodyY + BODY_HEIGHT / 2f * scale + HEAD_RY * 0.7f * scale;
@@ -272,6 +410,58 @@ public class Alien {
         if (!popping) {
             renderEyes(sr, x, headY, headTilt, scale);
         }
+    }
+
+    /**
+     * The water bucket hanging from a hand at ({@code handX}, {@code handY}). {@code tip} is 0 while
+     * it's simply being carried, or ±1 to tip it that way and show the water pitching over the lip.
+     */
+    private void renderBucket(ShapeRenderer sr, float handX, float handY, float scale, float tip) {
+        float w = BUCKET_WIDTH * scale;
+        float h = BUCKET_HEIGHT * scale;
+        // Carried upright below the hand; tipped, it hangs off to the side with its lip rolled over.
+        float cx = handX + tip * w * 0.35f;
+        float cy = handY - h * (tip == 0f ? 0.6f : 0.15f);
+        float lean = tip * 0.9f;
+
+        float topL = -w / 2f;
+        float topR = w / 2f;
+        float botL = -w / 2f * 0.72f;
+        float botR = w / 2f * 0.72f;
+
+        sr.setColor(BUCKET_COLOR);
+        sr.triangle(
+            cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean),
+            cx + rotX(topR, h / 2f, lean), cy + rotY(topR, h / 2f, lean),
+            cx + rotX(botR, -h / 2f, lean), cy + rotY(botR, -h / 2f, lean));
+        sr.triangle(
+            cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean),
+            cx + rotX(botR, -h / 2f, lean), cy + rotY(botR, -h / 2f, lean),
+            cx + rotX(botL, -h / 2f, lean), cy + rotY(botL, -h / 2f, lean));
+
+        sr.setColor(BUCKET_RIM_COLOR);
+        sr.rectLine(
+            cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean),
+            cx + rotX(topR, h / 2f, lean), cy + rotY(topR, h / 2f, lean), 2f * scale);
+
+        // The handle, and a sliver of water showing at the lip.
+        sr.setColor(BUCKET_RIM_COLOR);
+        sr.rectLine(cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean), handX, handY, 1.4f * scale);
+        sr.rectLine(cx + rotX(topR, h / 2f, lean), cy + rotY(topR, h / 2f, lean), handX, handY, 1.4f * scale);
+
+        sr.setColor(WATER_COLOR);
+        sr.rectLine(
+            cx + rotX(topL * 0.8f, h / 2f - 2f * scale, lean), cy + rotY(topL * 0.8f, h / 2f - 2f * scale, lean),
+            cx + rotX(topR * 0.8f, h / 2f - 2f * scale, lean), cy + rotY(topR * 0.8f, h / 2f - 2f * scale, lean),
+            2.5f * scale);
+    }
+
+    private static float rotX(float lx, float ly, float theta) {
+        return lx * MathUtils.cos(theta) - ly * MathUtils.sin(theta);
+    }
+
+    private static float rotY(float lx, float ly, float theta) {
+        return lx * MathUtils.sin(theta) + ly * MathUtils.cos(theta);
     }
 
     /** The cut-loose canopy, drifting up and shrinking away above wherever the alien landed. */
