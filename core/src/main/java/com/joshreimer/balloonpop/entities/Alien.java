@@ -80,6 +80,13 @@ public class Alien {
     private static final float BUCKET_WIDTH = 15f;
     private static final float BUCKET_HEIGHT = 13f;
     private static final float POUR_ARM_ANGLE = 2.1f; // radians from hanging straight down
+
+    // Pour phases, in seconds: raise and tip the bucket, hold it over while it drains, right it.
+    private static final float POUR_TIP_TIME = 0.45f;
+    private static final float POUR_DRAIN_TIME = 1.0f;
+    private static final float POUR_RIGHT_TIME = 0.5f;
+    private static final float POUR_TOTAL_TIME = POUR_TIP_TIME + POUR_DRAIN_TIME + POUR_RIGHT_TIME;
+    private static final float POUR_MAX_LEAN = 2.35f; // radians the bucket rolls past vertical
     private static final Color BUCKET_COLOR = new Color(0.55f, 0.58f, 0.62f, 1f);
     private static final Color BUCKET_RIM_COLOR = new Color(0.75f, 0.78f, 0.82f, 1f);
     private static final Color WATER_COLOR = new Color(0.25f, 0.6f, 0.95f, 1f);
@@ -118,6 +125,10 @@ public class Alien {
     private boolean hasWalkTarget = false;
     private float walkTargetX = 0f;
     private boolean carryingBucket = false;
+
+    // Pour animation. The bucket eases over to full tilt, holds while it drains, then rights
+    // itself -- a bucket that snapped to its final angle and stayed full read as a prop, not a pour.
+    private float pourTime = 0f;
 
     private final float swayPhase;
     private final float armPhaseL;
@@ -173,6 +184,10 @@ public class Alien {
             parachuteFade = Math.max(0f, parachuteFade - delta / PARACHUTE_FADE_DURATION);
         }
 
+        if (phase == Phase.POURING) {
+            pourTime += delta;
+        }
+
         if (phase == Phase.WALKING) {
             float speed = hasWalkTarget ? HURRY_WALK_SPEED : WALK_SPEED;
             float step = walkDir * speed * delta;
@@ -184,6 +199,38 @@ public class Alien {
                 walkedDistance += speed * delta;
             }
         }
+    }
+
+    /** How far the bucket has rolled over, 0 (upright) to 1 (fully inverted), eased at both ends. */
+    private float tiltProgress() {
+        if (pourTime < POUR_TIP_TIME) {
+            return smoothstep(pourTime / POUR_TIP_TIME);
+        }
+        if (pourTime < POUR_TIP_TIME + POUR_DRAIN_TIME) {
+            return 1f;
+        }
+        float t = (pourTime - POUR_TIP_TIME - POUR_DRAIN_TIME) / POUR_RIGHT_TIME;
+        return 1f - smoothstep(Math.min(1f, t));
+    }
+
+    /** How much water is left in the bucket, 1 (full) down to 0 (empty). Drains only while tipped. */
+    private float bucketFill() {
+        if (pourTime <= POUR_TIP_TIME) return 1f;
+        float drained = (pourTime - POUR_TIP_TIME) / POUR_DRAIN_TIME;
+        return MathUtils.clamp(1f - drained, 0f, 1f);
+    }
+
+    /** True while water should actually be leaving the bucket — drives the splash emitter. */
+    public boolean isPouringWater() {
+        return phase == Phase.POURING && pourTime > POUR_TIP_TIME * 0.65f && bucketFill() > 0f;
+    }
+
+    public boolean isPourFinished() {
+        return phase == Phase.POURING && pourTime >= POUR_TOTAL_TIME;
+    }
+
+    private static float smoothstep(float t) {
+        return t * t * (3f - 2f * t);
     }
 
     /**
@@ -252,15 +299,72 @@ public class Alien {
     public void pour() {
         phase = Phase.POURING;
         hasWalkTarget = false;
+        pourTime = 0f;
     }
 
-    /** World position of the tipped bucket's lip — where a pour should start from. */
-    public float getBucketX() {
-        return x + walkDir * (BODY_WIDTH / 3f + MathUtils.sin(POUR_ARM_ANGLE) * ARM_LENGTH);
+    /** Which way the alien is facing: +1 right, -1 left. The bucket rides on this side. */
+    public float getFacing() {
+        return walkDir;
     }
 
-    public float getBucketY() {
-        return y + BODY_HEIGHT / 2f - MathUtils.cos(POUR_ARM_ANGLE) * ARM_LENGTH;
+    /** World x of the hand holding the bucket, following the arm as it lifts. */
+    private float handX() {
+        return x + walkDir * (BODY_WIDTH / 3f + MathUtils.sin(armLiftAngle()) * ARM_LENGTH);
+    }
+
+    private float handY() {
+        return y + BODY_HEIGHT / 2f - MathUtils.cos(armLiftAngle()) * ARM_LENGTH;
+    }
+
+    /** The carrying arm swings up to POUR_ARM_ANGLE as the pour begins, rather than snapping there. */
+    private float armLiftAngle() {
+        return phase == Phase.POURING ? POUR_ARM_ANGLE * tiltProgress() : 0f;
+    }
+
+    /**
+     * How far the bucket has rolled, in radians. Negated against the facing so the mouth opens
+     * <em>toward</em> whatever is being doused: tipping right is a clockwise roll.
+     */
+    private float bucketLean() {
+        return -walkDir * POUR_MAX_LEAN * tiltProgress();
+    }
+
+    /**
+     * World position of the lip water spills from, tracked live so the stream stays attached to the
+     * bucket as it rolls instead of pouring from thin air. Taken as whichever rim corner is
+     * currently <em>lower</em>, which is self-correcting: it stays the spout at any tilt, and can't
+     * silently end up on the wrong corner if the roll direction changes.
+     */
+    public float getBucketLipX() {
+        return lowerRimCorner(true);
+    }
+
+    public float getBucketLipY() {
+        return lowerRimCorner(false);
+    }
+
+    private float lowerRimCorner(boolean wantX) {
+        float lean = bucketLean();
+        float cx = bucketCenterX(lean);
+        float cy = bucketCenterY(lean);
+
+        float leftX = cx + rotX(-BUCKET_WIDTH / 2f, BUCKET_HEIGHT / 2f, lean);
+        float leftY = cy + rotY(-BUCKET_WIDTH / 2f, BUCKET_HEIGHT / 2f, lean);
+        float rightX = cx + rotX(BUCKET_WIDTH / 2f, BUCKET_HEIGHT / 2f, lean);
+        float rightY = cy + rotY(BUCKET_WIDTH / 2f, BUCKET_HEIGHT / 2f, lean);
+
+        boolean leftLower = leftY <= rightY;
+        if (wantX) return leftLower ? leftX : rightX;
+        return leftLower ? leftY : rightY;
+    }
+
+    /** Bucket centre: hangs below the hand when carried, swings up over it as it's tipped. */
+    private float bucketCenterX(float lean) {
+        return handX() - MathUtils.sin(lean) * BUCKET_HEIGHT * 0.45f;
+    }
+
+    private float bucketCenterY(float lean) {
+        return handY() - MathUtils.cos(lean) * BUCKET_HEIGHT * 0.6f;
     }
 
     public void pop() {
@@ -380,17 +484,13 @@ public class Alien {
         float armThetaL = facing * MathUtils.sin(stride + MathUtils.PI) * ARM_SWING_AMP;
         float armThetaR = facing * MathUtils.sin(stride) * ARM_SWING_AMP;
 
-        // The bucket rides on whichever arm is on the side the alien faces, and that arm swings up
-        // over its head while pouring rather than swinging with the stride.
-        float carryThetaL = armThetaL;
-        float carryThetaR = armThetaR;
-        if (phase == Phase.POURING) {
-            if (facing >= 0f) {
-                carryThetaR = POUR_ARM_ANGLE;
-            } else {
-                carryThetaL = -POUR_ARM_ANGLE;
-            }
-        }
+        // The bucket rides on whichever arm is on the side the alien faces, and that arm eases up
+        // over the gun as the pour begins rather than swinging with the stride.
+        boolean pouring = phase == Phase.POURING;
+        float naturalCarry = facing >= 0f ? armThetaR : armThetaL;
+        float carryArm = pouring ? facing * armLiftAngle() : naturalCarry;
+        float carryThetaL = facing >= 0f ? armThetaL : carryArm;
+        float carryThetaR = facing >= 0f ? carryArm : armThetaR;
 
         renderLimb(sr, shoulderLX, shoulderY, carryThetaL, ARM_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
         renderLimb(sr, shoulderRX, shoulderY, carryThetaR, ARM_LENGTH * scale, LIMB_WIDTH * scale, topY, botY);
@@ -401,7 +501,7 @@ public class Alien {
             renderBucket(sr,
                 carryShoulderX + MathUtils.sin(carryTheta) * ARM_LENGTH * scale,
                 shoulderY - MathUtils.cos(carryTheta) * ARM_LENGTH * scale,
-                scale, phase == Phase.POURING ? facing : 0f);
+                scale);
         }
 
         float headTilt = facing * HEAD_WALK_LEAN;
@@ -413,47 +513,128 @@ public class Alien {
     }
 
     /**
-     * The water bucket hanging from a hand at ({@code handX}, {@code handY}). {@code tip} is 0 while
-     * it's simply being carried, or ±1 to tip it that way and show the water pitching over the lip.
+     * The water bucket held at ({@code handX}, {@code handY}), rolling over as the pour progresses.
+     * The remaining water is drawn as a body inside the bucket whose surface stays level with the
+     * world however far the bucket is rotated — a fill that rotated with the walls would look like
+     * painted-on decoration rather than liquid.
      */
-    private void renderBucket(ShapeRenderer sr, float handX, float handY, float scale, float tip) {
+    private void renderBucket(ShapeRenderer sr, float handX, float handY, float scale) {
         float w = BUCKET_WIDTH * scale;
         float h = BUCKET_HEIGHT * scale;
-        // Carried upright below the hand; tipped, it hangs off to the side with its lip rolled over.
-        float cx = handX + tip * w * 0.35f;
-        float cy = handY - h * (tip == 0f ? 0.6f : 0.15f);
-        float lean = tip * 0.9f;
+        // Same geometry as bucketLean()/bucketCenter*(), so the drawn spout and the point the
+        // WaterSplash emits from are the same place.
+        float lean = bucketLean();
+        float cx = handX - MathUtils.sin(lean) * h * 0.45f;
+        float cy = handY - MathUtils.cos(lean) * h * 0.6f;
 
-        float topL = -w / 2f;
-        float topR = w / 2f;
-        float botL = -w / 2f * 0.72f;
-        float botR = w / 2f * 0.72f;
+        // A pail: mouth wider than the base.
+        float topHalf = w / 2f;
+        float botHalf = w / 2f * 0.72f;
+        float tlX = cx + rotX(-topHalf, h / 2f, lean), tlY = cy + rotY(-topHalf, h / 2f, lean);
+        float trX = cx + rotX(topHalf, h / 2f, lean), trY = cy + rotY(topHalf, h / 2f, lean);
+        float blX = cx + rotX(-botHalf, -h / 2f, lean), blY = cy + rotY(-botHalf, -h / 2f, lean);
+        float brX = cx + rotX(botHalf, -h / 2f, lean), brY = cy + rotY(botHalf, -h / 2f, lean);
+
+        // Handle first, so the pail body overlaps it where it meets the rim.
+        sr.setColor(BUCKET_RIM_COLOR);
+        renderHandle(sr, tlX, tlY, trX, trY, handX, handY, scale);
 
         sr.setColor(BUCKET_COLOR);
-        sr.triangle(
-            cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean),
-            cx + rotX(topR, h / 2f, lean), cy + rotY(topR, h / 2f, lean),
-            cx + rotX(botR, -h / 2f, lean), cy + rotY(botR, -h / 2f, lean));
-        sr.triangle(
-            cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean),
-            cx + rotX(botR, -h / 2f, lean), cy + rotY(botR, -h / 2f, lean),
-            cx + rotX(botL, -h / 2f, lean), cy + rotY(botL, -h / 2f, lean));
+        sr.triangle(tlX, tlY, trX, trY, brX, brY);
+        sr.triangle(tlX, tlY, brX, brY, blX, blY);
 
-        sr.setColor(BUCKET_RIM_COLOR);
-        sr.rectLine(
-            cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean),
-            cx + rotX(topR, h / 2f, lean), cy + rotY(topR, h / 2f, lean), 2f * scale);
+        renderBucketWater(sr, cx, cy, w, h, lean, scale);
 
-        // The handle, and a sliver of water showing at the lip.
+        // Rim last: it should read as the near edge of the mouth, in front of the water.
         sr.setColor(BUCKET_RIM_COLOR);
-        sr.rectLine(cx + rotX(topL, h / 2f, lean), cy + rotY(topL, h / 2f, lean), handX, handY, 1.4f * scale);
-        sr.rectLine(cx + rotX(topR, h / 2f, lean), cy + rotY(topR, h / 2f, lean), handX, handY, 1.4f * scale);
+        sr.rectLine(tlX, tlY, trX, trY, 2.2f * scale);
+    }
+
+    /** The remaining water, clipped to the pail interior and kept level with the horizon. */
+    private void renderBucketWater(ShapeRenderer sr, float cx, float cy, float w, float h,
+                                    float lean, float scale) {
+        float fill = bucketFill();
+        if (fill <= 0.02f) return;
+
+        // Interior corners, inset from the walls.
+        float topHalf = w / 2f * 0.86f;
+        float botHalf = w / 2f * 0.62f;
+        float iTop = h / 2f - 1.5f * scale;
+        float iBot = -h / 2f + 1.5f * scale;
+
+        float tlX = cx + rotX(-topHalf, iTop, lean), tlY = cy + rotY(-topHalf, iTop, lean);
+        float trX = cx + rotX(topHalf, iTop, lean), trY = cy + rotY(topHalf, iTop, lean);
+        float blX = cx + rotX(-botHalf, iBot, lean), blY = cy + rotY(-botHalf, iBot, lean);
+        float brX = cx + rotX(botHalf, iBot, lean), brY = cy + rotY(botHalf, iBot, lean);
+
+        // Surface height: the water sits at the bottom of the interior and rises with the fill,
+        // measured in world Y so tipping the pail pours it out of the low corner on its own.
+        float lowest = Math.min(Math.min(tlY, trY), Math.min(blY, brY));
+        float highest = Math.max(Math.max(tlY, trY), Math.max(blY, brY));
+        float surfaceY = lowest + (highest - lowest) * fill;
 
         sr.setColor(WATER_COLOR);
-        sr.rectLine(
-            cx + rotX(topL * 0.8f, h / 2f - 2f * scale, lean), cy + rotY(topL * 0.8f, h / 2f - 2f * scale, lean),
-            cx + rotX(topR * 0.8f, h / 2f - 2f * scale, lean), cy + rotY(topR * 0.8f, h / 2f - 2f * scale, lean),
-            2.5f * scale);
+        fillPolygonBelow(sr, tlX, tlY, trX, trY, brX, brY, blX, blY, surfaceY);
+    }
+
+    /**
+     * Fills the part of a quad that lies below {@code surfaceY}, by clipping each of its two
+     * triangles against that horizontal line — this is what keeps the water level as the pail turns.
+     */
+    private void fillPolygonBelow(ShapeRenderer sr, float ax, float ay, float bx, float by,
+                                   float cx, float cy, float dx, float dy, float surfaceY) {
+        clipTriangleBelow(sr, ax, ay, bx, by, cx, cy, surfaceY);
+        clipTriangleBelow(sr, ax, ay, cx, cy, dx, dy, surfaceY);
+    }
+
+    /** Sutherland–Hodgman clip of one triangle against y <= surfaceY, fan-filled from the result. */
+    private void clipTriangleBelow(ShapeRenderer sr, float ax, float ay, float bx, float by,
+                                    float cx, float cy, float surfaceY) {
+        float[] inX = {ax, bx, cx};
+        float[] inY = {ay, by, cy};
+        float[] outX = new float[6];
+        float[] outY = new float[6];
+        int n = 0;
+
+        for (int i = 0; i < 3; i++) {
+            int j = (i + 1) % 3;
+            boolean iIn = inY[i] <= surfaceY;
+            boolean jIn = inY[j] <= surfaceY;
+
+            if (iIn) {
+                outX[n] = inX[i];
+                outY[n] = inY[i];
+                n++;
+            }
+            if (iIn != jIn) {
+                float t = (surfaceY - inY[i]) / (inY[j] - inY[i]);
+                outX[n] = inX[i] + (inX[j] - inX[i]) * t;
+                outY[n] = surfaceY;
+                n++;
+            }
+        }
+
+        for (int i = 1; i + 1 < n; i++) {
+            sr.triangle(outX[0], outY[0], outX[i], outY[i], outX[i + 1], outY[i + 1]);
+        }
+    }
+
+    /** A semicircular bail arching from one rim edge to the other, through the carrying hand. */
+    private void renderHandle(ShapeRenderer sr, float tlX, float tlY, float trX, float trY,
+                               float handX, float handY, float scale) {
+        int segments = 8;
+        float prevX = tlX;
+        float prevY = tlY;
+        for (int i = 1; i <= segments; i++) {
+            float t = (float) i / segments;
+            // Quadratic Bezier through the hand: the bail hangs from the rim and the hand grips its apex.
+            float u = 1f - t;
+            float px = u * u * tlX + 2f * u * t * handX + t * t * trX;
+            float py = u * u * tlY + 2f * u * t * handY + t * t * trY;
+            sr.rectLine(prevX, prevY, px, py, 1.5f * scale);
+            prevX = px;
+            prevY = py;
+        }
     }
 
     private static float rotX(float lx, float ly, float theta) {

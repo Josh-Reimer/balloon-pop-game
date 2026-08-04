@@ -2,6 +2,7 @@ package com.joshreimer.balloonpop.screens;
 
 import com.badlogic.gdx.Gdx;
 import com.badlogic.gdx.Screen;
+import com.badlogic.gdx.assets.AssetManager;
 import com.badlogic.gdx.audio.Sound;
 import com.badlogic.gdx.graphics.Color;
 import com.badlogic.gdx.graphics.GL20;
@@ -17,6 +18,8 @@ import com.badlogic.gdx.utils.viewport.ExtendViewport;
 import com.badlogic.gdx.utils.viewport.Viewport;
 import com.joshreimer.balloonpop.BalloonPopGame;
 import com.joshreimer.balloonpop.GameSettings;
+import com.joshreimer.balloonpop.audio.AlienVoiceManager;
+import com.joshreimer.balloonpop.audio.AlienVoiceType;
 import com.joshreimer.balloonpop.entities.Alien;
 import com.joshreimer.balloonpop.entities.AmmoStyle;
 import com.joshreimer.balloonpop.entities.Asteroid;
@@ -88,14 +91,24 @@ public class GameScreen implements Screen {
     // fire again. See beginOverheat() for the sequence.
     private static final int OVERHEAT_SHOT_LIMIT = 267;
     private static final int OVERHEAT_ALIENS_REQUIRED = 3;
-    private static final int OVERHEAT_ALIEN_PENALTY = 15;
-    private static final int OVERHEAT_CLOUD_SIZE = 5;
-    private static final float OVERHEAT_ALIEN_SPAWN_INTERVAL = 0.7f;
+    // Per alien that reaches the ground unshot. Lowered when the cloud grew: the swarm can't be
+    // shot at, so every alien in it lands, and the charge is really "cloud size x this" — at the
+    // old 15 a bigger cloud would have quietly tripled the cost of an overheat.
+    private static final int OVERHEAT_ALIEN_PENALTY = 8;
+    // A proper cloud, not a trickle: they come down in overlapping pairs so the sky above the
+    // stranded gun is genuinely full of them.
+    private static final int OVERHEAT_CLOUD_SIZE = 12;
+    private static final int OVERHEAT_SPAWN_BATCH = 2;
+    private static final float OVERHEAT_ALIEN_SPAWN_INTERVAL = 0.28f;
     // Much faster than a bonus alien's drift: the player can't shoot during an overheat, so a
     // leisurely descent is dead time rather than tension.
     private static final float OVERHEAT_ALIEN_FALL_SPEED = 150f;
     private static final float OVERHEAT_ALIEN_STANDOFF = 58f;
     private static final float OVERHEAT_BANNER_BLINK_RATE = 3.2f;
+
+    // Spoken alien taunts, shown as text so they land with the sound off too.
+    private static final float INSULT_TEXT_RISE = 26f;
+    private static final Color INSULT_TEXT_COLOR = new Color(0.55f, 1f, 0.6f, 1f);
 
     // Heat wisps rising off the barrel while it's overheated.
     private static final int HEAT_WISP_COUNT = 5;
@@ -161,6 +174,8 @@ public class GameScreen implements Screen {
     private final Array<WaterSplash> waterSplashes = new Array<>();
     private final Array<ScorePopup> scorePopups = new Array<>();
 
+    private final AlienVoiceManager voices;
+
     private Sound popSound;
     private Sound fireSound;
     private SfxStyle loadedSfxStyle;
@@ -194,15 +209,18 @@ public class GameScreen implements Screen {
     private float overheatTime = 0f;
     private Alien douser = null;
     private boolean dousePoured = false;
+    /** The in-flight pour, kept so its spout can be steered to follow the bucket lip each frame. */
+    private WaterSplash douseSplash = null;
 
     private final Vector3 touchWorld = new Vector3();
 
     /** Actual world height for the current screen; the viewport extends it past WORLD_HEIGHT. */
     private float worldHeight = WORLD_HEIGHT;
 
-    public GameScreen(BalloonPopGame game, GameSettings settings) {
+    public GameScreen(BalloonPopGame game, GameSettings settings, AssetManager assets) {
         this.game = game;
         this.settings = settings;
+        this.voices = new AlienVoiceManager(assets, WORLD_WIDTH);
 
         camera = new OrthographicCamera();
         // Extends the world vertically to fill the screen (never horizontally, so the 480-wide
@@ -262,6 +280,8 @@ public class GameScreen implements Screen {
         overheatTime = 0f;
         douser = null;
         dousePoured = false;
+        douseSplash = null;
+        voices.reset();
         burstShotCount = 0;
         lastBurstShotCount = 0;
         burstMessageTimer = 0f;
@@ -282,6 +302,10 @@ public class GameScreen implements Screen {
         if (state == State.PLAYING) {
             update(delta);
         }
+
+        // Outside the PLAYING guard so a line queued by the shot that ended the run still gets
+        // spoken, and so its text ages off the screen instead of freezing there.
+        voices.update(delta, settings.isMuted());
 
         draw();
     }
@@ -553,6 +577,7 @@ public class GameScreen implements Screen {
         overheatTime = 0f;
         douser = null;
         dousePoured = false;
+        douseSplash = null;
         firing = false;
 
         // Popped rather than deleted, so the sky visibly clears instead of things blinking out.
@@ -573,8 +598,8 @@ public class GameScreen implements Screen {
 
     /**
      * Keeps the swarm topped up until three aliens have landed, then hands over to the dousing.
-     * Aliens are spawned a few at a time rather than all at once so they arrive in a steady drizzle,
-     * and more keep coming if in-flight shots knock some of them down before they touch the ground.
+     * Aliens come down in overlapping batches rather than all at once, and more keep coming if
+     * in-flight shots knock some of them down before they touch the ground.
      */
     private void updateOverheat(float delta) {
         overheatTime += delta;
@@ -582,7 +607,9 @@ public class GameScreen implements Screen {
         if (overheat == Overheat.SWARM) {
             overheatSpawnTimer -= delta;
             if (overheatSpawnTimer <= 0f && overheatSpawned < OVERHEAT_CLOUD_SIZE) {
-                spawnOverheatAlien();
+                for (int i = 0; i < OVERHEAT_SPAWN_BATCH && overheatSpawned < OVERHEAT_CLOUD_SIZE; i++) {
+                    spawnOverheatAlien();
+                }
                 overheatSpawnTimer = OVERHEAT_ALIEN_SPAWN_INTERVAL;
             }
             // The cloud is exhausted but not enough of it made it down — send another wave.
@@ -605,20 +632,32 @@ public class GameScreen implements Screen {
             douser.faceToward(gun.getCenterX());
             douser.pour();
             dousePoured = true;
-            waterSplashes.add(new WaterSplash(
-                douser.getBucketX(), douser.getBucketY(),
-                gun.getCenterX(), GUN_Y + Gun.HEIGHT, GUN_Y));
+            douseSplash = new WaterSplash(
+                gun.getCenterX(), GUN_Y + Gun.HEIGHT, Gun.WIDTH / 2f, GUN_Y, douser.getFacing());
+            waterSplashes.add(douseSplash);
             playIfUnmuted(popSound, POP_VOLUME, 0.55f);
         }
-        if (dousePoured && waterSplashes.size == 0) {
+
+        // The spout follows the bucket lip every frame, so the stream stays attached to it as it
+        // rolls over and cuts off exactly when the bucket runs dry.
+        if (douseSplash != null) {
+            douseSplash.setSource(douser.getBucketLipX(), douser.getBucketLipY());
+            douseSplash.setEmitting(douser.isPouringWater());
+        }
+
+        if (dousePoured && douser.isPourFinished() && waterSplashes.size == 0) {
             endOverheat();
         }
     }
 
     private void spawnOverheatAlien() {
         float x = MathUtils.random(Alien.CANOPY_WIDTH / 2f, WORLD_WIDTH - Alien.CANOPY_WIDTH / 2f);
-        float y = worldHeight + Alien.BODY_HEIGHT / 2f + Alien.RIG_LENGTH + Alien.CANOPY_HEIGHT;
-        Alien alien = new Alien(x, y, OVERHEAT_ALIEN_FALL_SPEED, GUN_Y);
+        // Staggered above the top edge and given slightly different fall speeds, so a batch
+        // spawned on the same frame doesn't come down as a flat rank.
+        float y = worldHeight + Alien.BODY_HEIGHT / 2f + Alien.RIG_LENGTH + Alien.CANOPY_HEIGHT
+            + MathUtils.random(0f, 220f);
+        float speed = OVERHEAT_ALIEN_FALL_SPEED * MathUtils.random(0.85f, 1.15f);
+        Alien alien = new Alien(x, y, speed, GUN_Y);
         alien.holdOnLanding = true;
         aliens.add(alien);
         overheatSpawned++;
@@ -665,6 +704,7 @@ public class GameScreen implements Screen {
         shotsSinceCooldown = 0;
         douser = null;
         dousePoured = false;
+        douseSplash = null;
 
         // Clearing the flag matters as much as releasing them: any of the swarm still in the air
         // reverts to an ordinary bonus alien, so it lands and waddles off rather than standing
@@ -882,6 +922,10 @@ public class GameScreen implements Screen {
                     ball.alive = false;
                     explosions.add(new Explosion(alien.x, alien.y, Alien.RADIUS / 28f));
                     playIfUnmuted(popSound, POP_VOLUME, MathUtils.random(0.8f, 1.0f));
+                    // It gets the last word in. The swarm has its own, gun-specific set of lines.
+                    voices.onAlienDeath(
+                        alien.holdOnLanding ? AlienVoiceType.SWARM : AlienVoiceType.SCOUT,
+                        alien.x, alien.y, gun.getCenterX());
                     break;
                 }
             }
@@ -921,6 +965,7 @@ public class GameScreen implements Screen {
         drawBulletsGaugeText();
         drawBurstMessage();
         if (overheat != Overheat.NONE) drawOverheatBanner();
+        drawInsults();
         drawScorePopupText();
         if (state == State.READY) drawReadyOverlay();
         if (state == State.PAUSED) drawPausedOverlay();
@@ -1095,6 +1140,26 @@ public class GameScreen implements Screen {
         }
     }
 
+    /**
+     * The spoken insults, as text above where the alien died. Drawn regardless of the mute state —
+     * it exists so the lines land with the sound off, so gating it on audio would defeat the point.
+     * Clamped horizontally so a line from an alien near the edge is never cut off.
+     */
+    private void drawInsults() {
+        for (AlienVoiceManager.ActiveInsult insult : voices.getActiveInsults()) {
+            float progress = 1f - insult.timer / AlienVoiceManager.INSULT_TEXT_DURATION;
+            layout.setText(hudFont, insult.text);
+
+            float x = MathUtils.clamp(
+                insult.x - layout.width / 2f, 8f, WORLD_WIDTH - layout.width - 8f);
+            float y = insult.y + Alien.HEAD_RY + 24f + INSULT_TEXT_RISE * progress;
+
+            hudFont.setColor(INSULT_TEXT_COLOR);
+            hudFont.draw(batch, layout, x, y);
+        }
+        hudFont.setColor(Color.WHITE);
+    }
+
     private void drawScorePopupText() {
         for (ScorePopup p : scorePopups) {
             float y = popupY(p);
@@ -1196,5 +1261,6 @@ public class GameScreen implements Screen {
         titleFont.dispose();
         popSound.dispose();
         fireSound.dispose();
+        voices.dispose();
     }
 }
