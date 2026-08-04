@@ -38,8 +38,12 @@ public class WaterSplash {
     private static final float DROP_RADIUS_MAX = 4.6f;
     private static final int MAX_DROPS = 200;
 
-    /** Consecutive droplets closer than this are bridged into a continuous rope of water. */
-    private static final float ROPE_LINK_DISTANCE = 26f;
+    /**
+     * Consecutive droplets closer than this are bridged into a continuous rope of water. Kept
+     * short: bridging droplets that have already pulled well apart draws long, obviously
+     * rectangular bars rather than reading as a stream.
+     */
+    private static final float ROPE_LINK_DISTANCE = 13f;
 
     // Ricochet off the barrel.
     private static final int MAX_FRAGMENTS = 90;
@@ -107,7 +111,15 @@ public class WaterSplash {
     private final boolean[] steamLive = new boolean[MAX_STEAM];
     private int steamCursor = 0;
 
-    private final float gunX, gunTopY, gunHalfWidth, groundY;
+    /**
+     * The gun is treated as two stacked boxes — the narrow barrel above the wide body — rather than
+     * one slab at barrel height. A single wide slab makes water splash off thin air either side of
+     * the barrel, and worse, the alien is shorter than the barrel, so it pours from *below* the
+     * barrel top: with one slab every droplet counted as an impact the instant it was emitted.
+     */
+    private final float gunX, groundY;
+    private final float barrelTopY, barrelHalfWidth;
+    private final float bodyTopY, bodyHalfWidth;
     private final float pourDirection;
 
     private float sourceX, sourceY;
@@ -121,19 +133,24 @@ public class WaterSplash {
 
     /**
      * @param gunX centre of the gun being doused
-     * @param gunTopY top of the barrel, where water lands and steam boils off
-     * @param gunHalfWidth half the gun's width, for deciding what counts as a hit
+     * @param barrelTopY top of the barrel
+     * @param barrelHalfWidth half the barrel's width
+     * @param bodyTopY top of the gun body — the shoulder most of the water actually lands on
+     * @param bodyHalfWidth half the body's width
      * @param groundY ground level, where the puddle spreads
      * @param pourDirection +1 if the water is being tipped rightward, -1 leftward
      */
-    public WaterSplash(float gunX, float gunTopY, float gunHalfWidth, float groundY, float pourDirection) {
+    public WaterSplash(float gunX, float barrelTopY, float barrelHalfWidth,
+                       float bodyTopY, float bodyHalfWidth, float groundY, float pourDirection) {
         this.gunX = gunX;
-        this.gunTopY = gunTopY;
-        this.gunHalfWidth = gunHalfWidth;
+        this.barrelTopY = barrelTopY;
+        this.barrelHalfWidth = barrelHalfWidth;
+        this.bodyTopY = bodyTopY;
+        this.bodyHalfWidth = bodyHalfWidth;
         this.groundY = groundY;
         this.pourDirection = pourDirection;
         this.sourceX = gunX;
-        this.sourceY = gunTopY;
+        this.sourceY = barrelTopY;
     }
 
     /** Moves the spout to the bucket's current lip, so the stream stays attached as it tips. */
@@ -194,11 +211,11 @@ public class WaterSplash {
             dropX[i] += dropVX[i] * delta;
             dropY[i] += dropVY[i] * delta;
 
-            if (dropY[i] <= gunTopY && dropY[i] > groundY
-                && Math.abs(dropX[i] - gunX) <= gunHalfWidth) {
+            float surface = gunSurfaceAt(dropX[i]);
+            if (dropY[i] <= surface && dropY[i] > groundY) {
                 dropLive[i] = false;
                 dropLinked[i] = false;
-                onBarrelImpact(dropX[i]);
+                onGunImpact(dropX[i], surface);
                 continue;
             }
 
@@ -210,18 +227,29 @@ public class WaterSplash {
         }
     }
 
+    /**
+     * Height of the gun's upper surface at world x, or {@code -Float.MAX_VALUE} where there is no
+     * gun to land on. This is the two-box silhouette: barrel where it's narrow, body either side.
+     */
+    private float gunSurfaceAt(float x) {
+        float dx = Math.abs(x - gunX);
+        if (dx <= barrelHalfWidth) return barrelTopY;
+        if (dx <= bodyHalfWidth) return bodyTopY;
+        return -Float.MAX_VALUE;
+    }
+
     /** Water hitting hot metal: it sprays back, runs down the side, and flashes off as steam. */
-    private void onBarrelImpact(float x) {
+    private void onGunImpact(float x, float surfaceY) {
         for (int n = 0; n < FRAGMENTS_PER_IMPACT; n++) {
-            spawnFragment(x, gunTopY);
+            spawnFragment(x, surfaceY);
         }
         if (MathUtils.random() < RIVULET_CHANCE) {
-            startRivulet(x);
+            startRivulet(x, surfaceY);
         }
         steamAccumulator += STEAM_PER_IMPACT;
         while (steamAccumulator >= 1f) {
             steamAccumulator -= 1f;
-            spawnSteam(x, gunTopY);
+            spawnSteam(x, surfaceY);
         }
     }
 
@@ -252,13 +280,14 @@ public class WaterSplash {
         }
     }
 
-    private void startRivulet(float x) {
+    private void startRivulet(float x, float surfaceY) {
         int i = rivCursor;
         rivCursor = (rivCursor + 1) % MAX_RIVULETS;
-        // Rivulets run down the outside of the barrel, so nudge them to the nearer edge.
+        // Rivulets run down the outside of whatever was hit, so nudge them to the nearer edge of it.
+        float half = surfaceY >= barrelTopY ? barrelHalfWidth : bodyHalfWidth;
         float side = x >= gunX ? 1f : -1f;
-        rivX[i] = gunX + side * MathUtils.random(gunHalfWidth * 0.45f, gunHalfWidth);
-        rivY[i] = gunTopY;
+        rivX[i] = gunX + side * MathUtils.random(half * 0.5f, half);
+        rivY[i] = surfaceY;
         rivLen[i] = RIVULET_LENGTH * MathUtils.random(0.7f, 1.3f);
         rivLive[i] = true;
     }
@@ -322,7 +351,7 @@ public class WaterSplash {
                 if (dx * dx + dy * dy <= ROPE_LINK_DISTANCE * ROPE_LINK_DISTANCE) {
                     sr.setColor(WATER_COLOR);
                     sr.rectLine(dropX[i], dropY[i], dropX[next], dropY[next],
-                        Math.min(dropR[i], dropR[next]) * 1.7f);
+                        Math.min(dropR[i], dropR[next]) * 1.25f);
                 }
             }
 

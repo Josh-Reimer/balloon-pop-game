@@ -104,6 +104,7 @@ public class GameScreen implements Screen {
     // leisurely descent is dead time rather than tension.
     private static final float OVERHEAT_ALIEN_FALL_SPEED = 150f;
     private static final float OVERHEAT_ALIEN_STANDOFF = 58f;
+    private static final float OVERHEAT_ALIEN_MIN_SPACING = 34f;
     private static final float OVERHEAT_BANNER_BLINK_RATE = 3.2f;
 
     // Spoken alien taunts, shown as text so they land with the sound off too.
@@ -213,6 +214,9 @@ public class GameScreen implements Screen {
     private WaterSplash douseSplash = null;
 
     private final Vector3 touchWorld = new Vector3();
+
+    /** Scratch for de-overlapping insult text rows; sized past any plausible concurrent count. */
+    private final float[] insultRowY = new float[8];
 
     /** Actual world height for the current screen; the viewport extends it past WORLD_HEIGHT. */
     private float worldHeight = WORLD_HEIGHT;
@@ -554,6 +558,7 @@ public class GameScreen implements Screen {
             if (a.landedThisFrame && a.holdOnLanding) {
                 overheatLanded++;
                 addScoreChange(-OVERHEAT_ALIEN_PENALTY, a.x, a.y);
+                spreadFromNeighbours(a);
             }
 
             if (!a.alive || (!a.popping && a.isOffScreen(WORLD_WIDTH))) {
@@ -632,8 +637,13 @@ public class GameScreen implements Screen {
             douser.faceToward(gun.getCenterX());
             douser.pour();
             dousePoured = true;
+            // Barrel box then body box: the alien is shorter than the barrel, so most of the water
+            // lands on the gun's shoulders rather than its muzzle.
             douseSplash = new WaterSplash(
-                gun.getCenterX(), GUN_Y + Gun.HEIGHT, Gun.WIDTH / 2f, GUN_Y, douser.getFacing());
+                gun.getCenterX(),
+                GUN_Y + Gun.HEIGHT, Gun.BARREL_WIDTH / 2f,
+                GUN_Y + Gun.HEIGHT * 0.5f, Gun.WIDTH / 2f,
+                GUN_Y, douser.getFacing());
             waterSplashes.add(douseSplash);
             playIfUnmuted(popSound, POP_VOLUME, 0.55f);
         }
@@ -647,6 +657,33 @@ public class GameScreen implements Screen {
 
         if (dousePoured && douser.isPourFinished() && waterSplashes.size == 0) {
             endOverheat();
+        }
+    }
+
+    /**
+     * Nudges a just-landed alien clear of any it touched down on top of. With a dozen of them
+     * coming down at random x, two landing on the same spot is common, and perfectly overlapped
+     * aliens read as a rendering glitch rather than a crowd.
+     */
+    private void spreadFromNeighbours(Alien landed) {
+        for (int attempt = 0; attempt < 4; attempt++) {
+            boolean moved = false;
+            for (Alien other : aliens) {
+                if (other == landed || !other.isOnGround() || other.popping || !other.alive) continue;
+
+                float gap = other.x - landed.x;
+                if (Math.abs(gap) >= OVERHEAT_ALIEN_MIN_SPACING) continue;
+
+                // Push away from the neighbour, or pick a side if they're exactly coincident.
+                float push = gap == 0f
+                    ? (MathUtils.randomBoolean() ? 1f : -1f)
+                    : -Math.signum(gap);
+                landed.x = MathUtils.clamp(
+                    landed.x + push * (OVERHEAT_ALIEN_MIN_SPACING - Math.abs(gap)),
+                    Alien.BODY_WIDTH, WORLD_WIDTH - Alien.BODY_WIDTH);
+                moved = true;
+            }
+            if (!moved) return;
         }
     }
 
@@ -1143,18 +1180,49 @@ public class GameScreen implements Screen {
     /**
      * The spoken insults, as text above where the alien died. Drawn regardless of the mute state —
      * it exists so the lines land with the sound off, so gating it on audio would defeat the point.
-     * Clamped horizontally so a line from an alien near the edge is never cut off.
+     *
+     * <p>Clamped on both axes. Vertical matters more than it looks: aliens are very often shot the
+     * moment they enter at the top of the screen, and text placed above such a kill lands entirely
+     * off-screen — the line is then silently lost for exactly the players who most need it.
      */
     private void drawInsults() {
-        for (AlienVoiceManager.ActiveInsult insult : voices.getActiveInsults()) {
+        Array<AlienVoiceManager.ActiveInsult> insults = voices.getActiveInsults();
+        int placed = 0;
+
+        for (int i = 0; i < insults.size; i++) {
+            AlienVoiceManager.ActiveInsult insult = insults.get(i);
             float progress = 1f - insult.timer / AlienVoiceManager.INSULT_TEXT_DURATION;
+            // Colour must be set before setText: GlyphLayout bakes the font's colour at layout
+            // time, so setting it afterwards silently leaves the line whatever colour came before.
+            hudFont.setColor(INSULT_TEXT_COLOR);
             layout.setText(hudFont, insult.text);
 
             float x = MathUtils.clamp(
-                insult.x - layout.width / 2f, 8f, WORLD_WIDTH - layout.width - 8f);
+                insult.x - layout.width / 2f, 8f, Math.max(8f, WORLD_WIDTH - layout.width - 8f));
             float y = insult.y + Alien.HEAD_RY + 24f + INSULT_TEXT_RISE * progress;
+            // Keep clear of the HUD row at the top as well as the screen edge.
+            float ceiling = iconRowY() - ICON_RADIUS - 52f;
+            y = MathUtils.clamp(y, layout.height + 8f, ceiling);
 
-            hudFont.setColor(INSULT_TEXT_COLOR);
+            // Two kills near the top both clamp to the ceiling and would print on top of each
+            // other, which is unreadable — exactly the case the text exists to serve. Step any
+            // later line down until it clears the ones already placed.
+            float lineHeight = layout.height + 10f;
+            for (int guard = 0; guard < placed; guard++) {
+                boolean clear = true;
+                for (int j = 0; j < placed; j++) {
+                    if (Math.abs(y - insultRowY[j]) < lineHeight) {
+                        y = insultRowY[j] - lineHeight;
+                        clear = false;
+                    }
+                }
+                if (clear) break;
+            }
+
+            if (placed < insultRowY.length) {
+                insultRowY[placed++] = y;
+            }
+
             hudFont.draw(batch, layout, x, y);
         }
         hudFont.setColor(Color.WHITE);

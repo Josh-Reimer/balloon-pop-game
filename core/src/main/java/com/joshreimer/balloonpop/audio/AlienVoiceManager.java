@@ -109,12 +109,20 @@ public class AlienVoiceManager implements Disposable {
             clipPaths[t] = new String[type.getClipCount()];
             lastPlayedIndex[t] = -1;
 
+            int found = 0;
             for (int i = 0; i < type.getClipCount(); i++) {
                 String path = resolveClipPath(type.getClipBasePath(i));
                 clipPaths[t][i] = path;
                 if (path != null) {
                     assets.load(path, Sound.class);
+                    found++;
                 }
+            }
+            // Worth saying out loud: a silent pool is otherwise indistinguishable from a working
+            // one, and the usual cause is a filename that doesn't match what's in assets/voice.
+            if (found < type.getClipCount()) {
+                Gdx.app.log("AlienVoice", "only " + found + "/" + type.getClipCount()
+                    + " clips found for " + type + " (expected " + type.getClipBasePath(0) + ".ogg/.wav)");
             }
         }
     }
