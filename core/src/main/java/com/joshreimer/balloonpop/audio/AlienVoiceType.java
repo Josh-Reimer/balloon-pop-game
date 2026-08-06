@@ -50,8 +50,12 @@ public enum AlienVoiceType {
 
     /**
      * Asset path for clip {@code index}, without an extension — {@link AlienVoiceManager} resolves
-     * that, preferring {@code .ogg} so hand-recorded clips can replace the synthesized {@code .wav}
-     * placeholders by filename alone, with no code change.
+     * that, preferring {@code .ogg} so hand-recorded clips can replace the generated {@code .wav}
+     * ones by filename alone, with no code change.
+     *
+     * <p>Clip {@code index} is spoken over insult {@code index}: the audio and the on-screen text
+     * are the same line, so the arrays above and {@code scripts/generate-alien-voices.sh} — which
+     * renders the clips from those same lines — have to stay in the same order.
      */
     public String getClipBasePath(int index) {
         return String.format("voice/%s%02d", prefix, index + 1);

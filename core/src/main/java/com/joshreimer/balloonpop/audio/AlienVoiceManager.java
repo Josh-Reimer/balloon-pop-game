@@ -18,7 +18,8 @@ import com.badlogic.gdx.utils.Disposable;
  * <p>Three separate mechanisms keep it from becoming a wall of sound:
  * <ul>
  *   <li>at most one line is <em>started</em> per frame, so an area kill can't fire eight at once;
- *   <li>queued lines are spaced by a stagger delay, so a chain reads as a sequence of hecklers;
+ *   <li>queued lines are spaced by a stagger delay longer than the longest clip, so a chain reads
+ *       as a sequence of hecklers taking turns rather than a crowd shouting at once;
  *   <li>each type has its own cooldown, and lines that come up during it are dropped rather than
  *       backing up — a kill streak should thin out, not queue a backlog that plays over the
  *       following ten seconds.
@@ -31,27 +32,45 @@ import com.badlogic.gdx.utils.Disposable;
  */
 public class AlienVoiceManager implements Disposable {
 
-    /** Pitch jitter applied per play so a small pool doesn't sound robotic on repeat. */
-    private static final float PITCH_MIN = 0.92f;
-    private static final float PITCH_MAX = 1.08f;
+    /**
+     * Pitch jitter applied per play so a small pool doesn't sound robotic on repeat. Kept narrow:
+     * the clips are spoken English, and a shift big enough to really disguise a repeat is also big
+     * enough to slur the words.
+     */
+    private static final float PITCH_MIN = 0.95f;
+    private static final float PITCH_MAX = 1.05f;
 
-    /** Minimum spacing between two lines starting, whoever they belong to. */
-    private static final float STAGGER_MIN = 0.15f;
-    private static final float STAGGER_MAX = 0.25f;
+    /**
+     * The longest clip in {@code assets/voice/}, rounded up. Every spacing below is derived from it
+     * rather than guessed, since {@link Sound} can't report its own length.
+     */
+    private static final float LONGEST_CLIP = 1.7f;
+
+    /**
+     * Minimum spacing between two lines starting, whoever they belong to — long enough that the
+     * previous line has finished. Two aliens talking over each other is unintelligible however
+     * clearly each one was recorded, so the stagger is what keeps the words usable in a chain, not
+     * just what keeps the volume down.
+     */
+    private static final float STAGGER_MIN = LONGEST_CLIP;
+    private static final float STAGGER_MAX = LONGEST_CLIP + 0.3f;
 
     /** Per-type quiet period after a line, so one kind of kill can't machine-gun its pool. */
-    private static final float TYPE_COOLDOWN = 0.9f;
+    private static final float TYPE_COOLDOWN = LONGEST_CLIP + 0.1f;
 
-    /** Anything queued but not started within this long is stale — the moment has passed. */
-    private static final float QUEUE_EXPIRY = 1.2f;
-    private static final int MAX_QUEUED = 6;
+    /**
+     * Anything queued but not started within this long is stale — the moment has passed. Sized to
+     * let one line wait out the one ahead of it, and no longer.
+     */
+    private static final float QUEUE_EXPIRY = STAGGER_MAX + 0.4f;
+    private static final int MAX_QUEUED = 3;
 
     private static final float BASE_VOLUME = 0.85f;
     /** Floor for the distance attenuation, so a far-off alien is quieter but never inaudible. */
     private static final float MIN_DISTANCE_VOLUME = 0.45f;
 
-    /** How long an insult stays on screen. Comfortably longer than any clip. */
-    public static final float INSULT_TEXT_DURATION = 1.6f;
+    /** How long an insult stays on screen. Outlasts the longest clip, with a beat left to read it. */
+    public static final float INSULT_TEXT_DURATION = LONGEST_CLIP + 0.6f;
 
     /** A line waiting its turn: everything needed to play it is captured at the moment of death. */
     private static class QueuedLine {
@@ -128,9 +147,8 @@ public class AlienVoiceManager implements Disposable {
     }
 
     /**
-     * Prefers a hand-recorded {@code .ogg} and falls back to the synthesized {@code .wav}
-     * placeholder, so dropping real recordings into {@code assets/voice/} is all it takes to
-     * replace them.
+     * Prefers a hand-recorded {@code .ogg} and falls back to the generated {@code .wav}, so dropping
+     * real recordings into {@code assets/voice/} is all it takes to replace them.
      */
     private static String resolveClipPath(String basePath) {
         String ogg = basePath + ".ogg";
